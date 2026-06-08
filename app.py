@@ -377,6 +377,8 @@ if hd and hd['avg']:
     cp_years = sorted(hd['cp_data'].keys())  # years that have CP data
     fig_cp = go.Figure()
     cp_x_idx = list(range(len(cp_years)))  # use numeric index [0, 1, 2]
+    # Collect annotation data first, then apply anti-overlap
+    annotation_items = []
     for cp in top_cps:
         pts = []
         for yr in cp_years:
@@ -386,24 +388,35 @@ if hd and hd['avg']:
         fig_cp.add_trace(go.Scatter(x=cp_x_idx, y=pts, name=cp, mode='lines+markers', showlegend=False,
             line=dict(color=CP_COLORS[cp_type], width=2.5),
             marker=dict(size=7)))
-        # Add CP name + growth % annotation at the last point
+        # Collect label info
         if len(pts) >= 2 and pts[-1] and pts[-2] and pts[-2] > 0:
             g = (pts[-1]-pts[-2])/pts[-2]
             g_text = f"+{g:.0%}" if g >= 0 else f"{g:.0%}"
-            g_color = '#2e7d32' if g >= 0 else '#c62828'
-            fig_cp.add_annotation(
-                x=cp_x_idx[-1], y=pts[-1],
-                text=f"{cp}  {g_text}",
-                showarrow=False,
-                xanchor='left', xshift=10,
-                font=dict(size=14, color=CP_COLORS[cp_type], family='Arial'))
+            annotation_items.append({'y': pts[-1], 'text': f"{cp}  {g_text}", 'color': CP_COLORS[cp_type]})
         elif len(pts) >= 1 and pts[-1]:
-            fig_cp.add_annotation(
-                x=cp_x_idx[-1], y=pts[-1],
-                text=f"{cp}",
-                showarrow=False,
-                xanchor='left', xshift=10,
-                font=dict(size=14, color=CP_COLORS[cp_type], family='Arial'))
+            annotation_items.append({'y': pts[-1], 'text': f"{cp}", 'color': CP_COLORS[cp_type]})
+
+    # Anti-overlap: sort by y value, ensure minimum gap between labels
+    annotation_items.sort(key=lambda a: a['y'], reverse=True)
+    min_gap = 2500  # minimum pixel gap between labels (in y-axis units)
+    adjusted_y = []
+    for i, item in enumerate(annotation_items):
+        y = item['y']
+        if i > 0 and adjusted_y:
+            # Check if too close to previous (above) label
+            prev_y = adjusted_y[-1]
+            if prev_y - y < min_gap:
+                y = prev_y - min_gap
+        adjusted_y.append(y)
+
+    # Add annotations with adjusted positions
+    for item, adj_y in zip(annotation_items, adjusted_y):
+        fig_cp.add_annotation(
+            x=cp_x_idx[-1], y=adj_y,
+            text=item['text'],
+            showarrow=False,
+            xanchor='left', xshift=10,
+            font=dict(size=14, color=item['color'], family='Arial'))
 
     fig_cp.update_layout(
         xaxis=dict(tickmode='array', tickvals=cp_x_idx, ticktext=[str(yr) for yr in cp_years],
