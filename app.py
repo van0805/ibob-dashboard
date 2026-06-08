@@ -344,12 +344,11 @@ if hd and hd['avg']:
             fig_daily.add_vline(x=i, line_width=1, line_dash="dot", line_color="#e0e0e0")
         fig_daily.update_layout(yaxis=dict(tickformat=','), showlegend=True,
             legend=dict(orientation='h',yanchor='bottom',y=1.02),
-            margin=dict(l=50,r=20,t=30,b=40), height=380, template='plotly_white')
+            margin=dict(l=50,r=20,t=30,b=40), height=380, template='plotly_white',
+            yaxis_range=[0, 300000])
         st.plotly_chart(fig_daily, use_container_width=True)
 
     # Control Point Chart
-    st.markdown(f"**Avg. Daily Mainland Visitors by Control Point** during {selected_holiday}")
-    # Get top CPs
     top_cps = ['Lok Ma Chau Spur Line','Express Rail Link West Kowloon','Lo Wu',
                'Shenzhen Bay','Heung Yuen Wai','Hong Kong-Zhuhai-Macao Bridge','Lok Ma Chau','Airport']
 
@@ -360,19 +359,34 @@ if hd and hd['avg']:
             val = hd['cp_data'].get(yr, {}).get(cp, 0)
             pts.append(int(val) if val > 500 else None)
         cp_type = CP_TYPE_MAP.get(cp, 'other')
-        # Growth label
-        if len(pts) >= 2 and pts[-1] and pts[-2] and pts[-2] > 0:
-            g = (pts[-1]-pts[-2])/pts[-2]
-            label = f"{cp} ({g:+.0%})"
-        else:
-            label = cp
-        fig_cp.add_trace(go.Scatter(x=years_avail, y=pts, name=label, mode='lines+markers',
+        fig_cp.add_trace(go.Scatter(x=years_avail, y=pts, name=cp, mode='lines+markers', showlegend=False,
             line=dict(color=CP_COLORS[cp_type], width=2.5),
             marker=dict(size=7)))
-    fig_cp.update_layout(yaxis=dict(tickformat=','),
-        legend=dict(x=1.02, y=1, font=dict(size=10)),
-        margin=dict(l=60,r=220,t=40,b=40), height=420, template='plotly_white',
-        title=dict(text=f"(Immigration Department Data)", font=dict(size=11, color='#888')))
+        # Add CP name + growth % annotation at the last point
+        if len(pts) >= 2 and pts[-1] and pts[-2] and pts[-2] > 0:
+            g = (pts[-1]-pts[-2])/pts[-2]
+            g_text = f"+{g:.0%}" if g >= 0 else f"{g:.0%}"
+            g_color = '#2e7d32' if g >= 0 else '#c62828'
+            fig_cp.add_annotation(
+                x=years_avail[-1], y=pts[-1],
+                text=f"<b>{cp}</b>  <span style='color:{g_color}'>{g_text}</span>",
+                showarrow=False,
+                xanchor='left', xshift=10,
+                font=dict(size=10, color=CP_COLORS[cp_type]))
+        elif len(pts) >= 1 and pts[-1]:
+            fig_cp.add_annotation(
+                x=years_avail[-1], y=pts[-1],
+                text=f"<b>{cp}</b>",
+                showarrow=False,
+                xanchor='left', xshift=10,
+                font=dict(size=10, color=CP_COLORS[cp_type]))
+
+    fig_cp.update_layout(
+        yaxis=dict(tickformat=',', range=[0, None]),
+        showlegend=False,
+        margin=dict(l=60,r=250,t=60,b=40), height=420, template='plotly_white',
+        title=dict(text=f"Avg. Daily Mainland Visitors by Control Point during {selected_holiday}*<br><sup>(Immigration Department Data)          Growth^ (26 vs 25)</sup>",
+                   font=dict(size=13)))
     st.plotly_chart(fig_cp, use_container_width=True)
 
 else:
