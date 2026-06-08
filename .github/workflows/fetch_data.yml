@@ -1,0 +1,31 @@
+name: Fetch IMMD Data Weekly
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # Every Monday at 2am UTC (10am HKT)
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests pandas
+
+      - name: Fetch IMMD CSV
+        run: python scraper.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git diff --cached --quiet || git commit -m "Auto-update: IMMD data $(date +'%Y-%m-%d')"
+          git push
