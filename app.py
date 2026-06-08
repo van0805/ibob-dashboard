@@ -42,6 +42,10 @@ HOLIDAY_PERIODS = {
 }
 
 CP_COLORS = {'rail':'#3A7976','car':'#B9A779','air':'#CF9E9A','other':'#A6A6A6'}
+CP_DISPLAY_NAME = {
+    'Lok Ma Chau': 'Lok Ma Chau (皇岗口岸)',
+}
+
 CP_TYPE_MAP = {
     'Lok Ma Chau Spur Line':'rail','Express Rail Link West Kowloon':'rail','Lo Wu':'rail',
     'Shenzhen Bay':'car','Heung Yuen Wai':'car','Hong Kong-Zhuhai-Macao Bridge':'car','Lok Ma Chau':'car',
@@ -392,9 +396,21 @@ if hd and hd['avg']:
         if len(pts) >= 2 and pts[-1] and pts[-2] and pts[-2] > 0:
             g = (pts[-1]-pts[-2])/pts[-2]
             g_text = f"+{g:.0%}" if g >= 0 else f"{g:.0%}"
-            annotation_items.append({'y': pts[-1], 'text': f"{cp}  {g_text}", 'color': CP_COLORS[cp_type]})
+            annotation_items.append({'y': pts[-1], 'text': f"{CP_DISPLAY_NAME.get(cp, cp)}  {g_text}", 'color': CP_COLORS[cp_type]})
         elif len(pts) >= 1 and pts[-1]:
-            annotation_items.append({'y': pts[-1], 'text': f"{cp}", 'color': CP_COLORS[cp_type]})
+            annotation_items.append({'y': pts[-1], 'text': f"{CP_DISPLAY_NAME.get(cp, cp)}", 'color': CP_COLORS[cp_type]})
+
+    # Add "Others" line: sum of all CPs not in top_cps
+    others_pts = []
+    for yr in cp_years:
+        yr_data = hd['cp_data'].get(yr, {})
+        others_val = sum(v for k, v in yr_data.items() if k not in top_cps)
+        others_pts.append(int(others_val) if others_val > 0 else None)
+    fig_cp.add_trace(go.Scatter(x=cp_x_idx, y=others_pts, name='Others', mode='lines+markers', showlegend=False,
+        line=dict(color='#A6A6A6', width=1.5, dash='dot'),
+        marker=dict(size=5)))
+    if others_pts and others_pts[-1]:
+        annotation_items.append({'y': others_pts[-1], 'text': 'Others', 'color': '#A6A6A6'})
 
     # Anti-overlap: sort by y value, ensure minimum gap between labels
     annotation_items.sort(key=lambda a: a['y'], reverse=True)
