@@ -95,7 +95,8 @@ def process_raw(df):
     arrivals['tourist_total'] = arrivals['Mainland Visitors'] + arrivals['Other Visitors']
     daily_in = arrivals.groupby('Date').agg(
         tourist_arrival=('tourist_total','sum'),
-        mainland_arrival=('Mainland Visitors','sum')
+        mainland_arrival=('Mainland Visitors','sum'),
+        intl_arrival=('Other Visitors','sum')
     ).reset_index()
     daily_in['Year'] = daily_in['Date'].dt.year
     daily_in['Month'] = daily_in['Date'].dt.month
@@ -243,28 +244,49 @@ st.plotly_chart(make_chart("Daily Arrival of All Tourists by Month", inbound_s, 
 
 # Recovery rate table (computed dynamically)
 st.markdown("**Recovery Rate vs. 2018**")
-rec_rows = []
-for yr in [2025,2026]:
-    series = inbound_s[str(yr)]
+# 2018 baseline by type (from Excel - Mainland and Intl)
+MAINLAND_2018 = {1:132097,2:156357,3:117796,4:134413,5:122709,6:120557,7:141419,8:154956,9:123129,10:149308,11:153770,12:164596}
+INTL_2018 = {k: INBOUND_2018[k]-MAINLAND_2018[k] for k in INBOUND_2018}
+
+# Get monthly mainland and intl series
+monthly_mainland = get_monthly(daily_in, 'mainland_arrival') if daily_in is not None else None
+monthly_intl = get_monthly(daily_in, 'intl_arrival') if daily_in is not None else None
+
+def calc_recovery(monthly_data, baseline_dict, year):
+    """Calculate recovery rate for each month vs 2018."""
+    if monthly_data is None:
+        return ['—']*11
+    series = get_series(monthly_data, year)
     rates = []
     for i, val in enumerate(series):
-        base = inbound_2018[i] if i == 0 else INBOUND_2018.get(i+2, None)
-        # map index: 0=Jan&Feb, 1=Mar(3), 2=Apr(4)...
-        month_key = [0,3,4,5,6,7,8,9,10,11,12][i] if i < 11 else None
         if i == 0:
-            base_val = (INBOUND_2018[1]+INBOUND_2018[2])/2
+            base_val = (baseline_dict[1]+baseline_dict[2])/2
         else:
-            base_val = INBOUND_2018.get(i+2, None)
-        if val and base_val:
+            base_val = baseline_dict.get(i+2, None)
+        if val and base_val and base_val > 0:
             rates.append(f"{val/base_val:.0%}")
         else:
             rates.append("—")
-    rec_rows.append([f'{yr} Overall'] + rates)
+    # FY average
+    valid = [v for v in series if v]
+    base_valid = [(baseline_dict[1]+baseline_dict[2])/2] + [baseline_dict.get(m,0) for m in range(3,13)]
+    base_valid = [b for b, v in zip(base_valid, series) if v]
+    if valid and base_valid:
+        rates.append(f"{sum(valid)/sum(base_valid):.0%}")
+    else:
+        rates.append("—")
+    return rates
+
+rec_rows = []
+for yr in [2025, 2026]:
+    rec_rows.append([f'{yr} Overall'] + calc_recovery(monthly_in, INBOUND_2018, yr))
+    rec_rows.append([f'{yr} Mainland'] + calc_recovery(monthly_mainland, MAINLAND_2018, yr))
+    rec_rows.append([f'{yr} Intl'] + calc_recovery(monthly_intl, INTL_2018, yr))
 
 months_h = ['Jan&Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-rec_df = pd.DataFrame(rec_rows, columns=['Recovery Rate vs 2018']+months_h)
+rec_df = pd.DataFrame(rec_rows, columns=['Recovery Rate vs 2018']+months_h+['FY'])
 st.dataframe(rec_df, use_container_width=True, hide_index=True)
-st.caption("Source: Immigration Department. Recovery rate = daily avg vs 2018 comparable month.")
+st.caption("Source: Transportation Dept; Tourism Board; Immigration Dept.")
 
 # ===== OUTBOUND =====
 st.markdown("---")
@@ -354,7 +376,7 @@ if hd and hd['avg']:
 
     cp_years = sorted(hd['cp_data'].keys())  # years that have CP data
     fig_cp = go.Figure()
-    cp_x_labels = [str(yr) for yr in cp_years]  # ensure string categories
+    cp_x_labels = [f"  {yr}  " for yr in cp_years]  # add spaces to force categorical axis
     for cp in top_cps:
         pts = []
         for yr in cp_years:
