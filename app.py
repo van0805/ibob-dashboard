@@ -156,7 +156,7 @@ def make_chart(title, series_dict, y_min=0, y_max=None):
             hovertemplate='%{x}<br>'+yr+': <b>%{customdata}K</b><extra></extra>',
             customdata=[int(round(v/1000)) if v else 0 for v in valid],
             connectgaps=False))
-    fig.update_layout(title=dict(text=title,font=dict(size=14)),
+    fig.update_layout(title=dict(text=title,font=dict(size=17)),
         yaxis=dict(tickformat=',', range=[y_min, y_max]),
         legend=dict(orientation='h',yanchor='bottom',y=1.02,xanchor='right',x=1),
         margin=dict(l=60,r=20,t=60,b=40), height=380, template='plotly_white', hovermode='x unified')
@@ -376,14 +376,14 @@ if hd and hd['avg']:
 
     cp_years = sorted(hd['cp_data'].keys())  # years that have CP data
     fig_cp = go.Figure()
-    cp_x_labels = [f"  {yr}  " for yr in cp_years]  # add spaces to force categorical axis
+    cp_x_idx = list(range(len(cp_years)))  # use numeric index [0, 1, 2]
     for cp in top_cps:
         pts = []
         for yr in cp_years:
             val = hd['cp_data'].get(yr, {}).get(cp, 0)
             pts.append(int(val) if val > 500 else None)
         cp_type = CP_TYPE_MAP.get(cp, 'other')
-        fig_cp.add_trace(go.Scatter(x=cp_x_labels, y=pts, name=cp, mode='lines+markers', showlegend=False,
+        fig_cp.add_trace(go.Scatter(x=cp_x_idx, y=pts, name=cp, mode='lines+markers', showlegend=False,
             line=dict(color=CP_COLORS[cp_type], width=2.5),
             marker=dict(size=7)))
         # Add CP name + growth % annotation at the last point
@@ -392,26 +392,27 @@ if hd and hd['avg']:
             g_text = f"+{g:.0%}" if g >= 0 else f"{g:.0%}"
             g_color = '#2e7d32' if g >= 0 else '#c62828'
             fig_cp.add_annotation(
-                x=cp_x_labels[-1], y=pts[-1],
-                text=f"<b>{cp}</b>  <span style='color:{g_color}'>{g_text}</span>",
+                x=cp_x_idx[-1], y=pts[-1],
+                text=f"{cp}  {g_text}",
                 showarrow=False,
                 xanchor='left', xshift=10,
-                font=dict(size=10, color=CP_COLORS[cp_type]))
+                font=dict(size=14, color=CP_COLORS[cp_type], family='Arial'))
         elif len(pts) >= 1 and pts[-1]:
             fig_cp.add_annotation(
-                x=cp_x_labels[-1], y=pts[-1],
-                text=f"<b>{cp}</b>",
+                x=cp_x_idx[-1], y=pts[-1],
+                text=f"{cp}",
                 showarrow=False,
                 xanchor='left', xshift=10,
-                font=dict(size=10, color=CP_COLORS[cp_type]))
+                font=dict(size=14, color=CP_COLORS[cp_type], family='Arial'))
 
     fig_cp.update_layout(
-        xaxis=dict(type='category'),
+        xaxis=dict(tickmode='array', tickvals=cp_x_idx, ticktext=[str(yr) for yr in cp_years],
+                   range=[-0.3, len(cp_years)-0.7]),
         yaxis=dict(tickformat=',', range=[0, None]),
         showlegend=False,
         margin=dict(l=60,r=250,t=60,b=40), height=420, template='plotly_white',
         title=dict(text=f"Avg. Daily Mainland Visitors by Control Point during {selected_holiday}*<br><sup>(Immigration Department Data)          Growth^ (26 vs 25)</sup>",
-                   font=dict(size=13)))
+                   font=dict(size=16)))
     st.plotly_chart(fig_cp, use_container_width=True)
 
 else:
