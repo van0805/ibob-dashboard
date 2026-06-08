@@ -352,14 +352,16 @@ if hd and hd['avg']:
     top_cps = ['Lok Ma Chau Spur Line','Express Rail Link West Kowloon','Lo Wu',
                'Shenzhen Bay','Heung Yuen Wai','Hong Kong-Zhuhai-Macao Bridge','Lok Ma Chau','Airport']
 
+    cp_years = sorted(hd['cp_data'].keys())  # years that have CP data
     fig_cp = go.Figure()
+    cp_x_labels = [str(yr) for yr in cp_years]  # ensure string categories
     for cp in top_cps:
         pts = []
-        for yr in years_avail:
+        for yr in cp_years:
             val = hd['cp_data'].get(yr, {}).get(cp, 0)
             pts.append(int(val) if val > 500 else None)
         cp_type = CP_TYPE_MAP.get(cp, 'other')
-        fig_cp.add_trace(go.Scatter(x=years_avail, y=pts, name=cp, mode='lines+markers', showlegend=False,
+        fig_cp.add_trace(go.Scatter(x=cp_x_labels, y=pts, name=cp, mode='lines+markers', showlegend=False,
             line=dict(color=CP_COLORS[cp_type], width=2.5),
             marker=dict(size=7)))
         # Add CP name + growth % annotation at the last point
@@ -368,14 +370,14 @@ if hd and hd['avg']:
             g_text = f"+{g:.0%}" if g >= 0 else f"{g:.0%}"
             g_color = '#2e7d32' if g >= 0 else '#c62828'
             fig_cp.add_annotation(
-                x=years_avail[-1], y=pts[-1],
+                x=cp_x_labels[-1], y=pts[-1],
                 text=f"<b>{cp}</b>  <span style='color:{g_color}'>{g_text}</span>",
                 showarrow=False,
                 xanchor='left', xshift=10,
                 font=dict(size=10, color=CP_COLORS[cp_type]))
         elif len(pts) >= 1 and pts[-1]:
             fig_cp.add_annotation(
-                x=years_avail[-1], y=pts[-1],
+                x=cp_x_labels[-1], y=pts[-1],
                 text=f"<b>{cp}</b>",
                 showarrow=False,
                 xanchor='left', xshift=10,
