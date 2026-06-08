@@ -138,7 +138,7 @@ def get_series(monthly, year, col):
     return res
 
 
-def make_monthly_chart(title, series_dict, y_min=0):
+def make_monthly_chart(title, series_dict, y_min=0, y_max=None):
     months = ['Jan&Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
     fig = go.Figure()
     for yr, data in series_dict.items():
@@ -149,7 +149,7 @@ def make_monthly_chart(title, series_dict, y_min=0):
             hovertemplate='%{x}: '+yr+' <b>%{customdata}K</b><extra></extra>',
             customdata=[int(round(v/1000)) if v else 0 for v in valid],
             connectgaps=False))
-    fig.update_layout(title=dict(text=title,font=dict(size=14)), yaxis=dict(tickformat=',',range=[y_min,None]),
+    fig.update_layout(title=dict(text=title,font=dict(size=14)), yaxis=dict(tickformat=',',range=[y_min,y_max]),
         legend=dict(orientation='h',yanchor='bottom',y=1.02,xanchor='right',x=1),
         margin=dict(l=60,r=20,t=60,b=40), height=380, template='plotly_white', hovermode='x unified')
     return fig
@@ -180,7 +180,7 @@ st.subheader("🛬 Inbound Tourist Trend: Recovery Rate vs 2018")
 inbound_2018 = [(INBOUND_2018[1]+INBOUND_2018[2])/2]+[INBOUND_2018[m] for m in range(3,13)]
 inbound_s = {'2018': inbound_2018}
 for yr in [2024,2025,2026]: inbound_s[str(yr)] = get_series(monthly,yr,'inbound_daily')
-st.plotly_chart(make_monthly_chart("Daily Arrival of All Tourists by Month", inbound_s), use_container_width=True)
+st.plotly_chart(make_monthly_chart("Daily Arrival of All Tourists by Month", inbound_s, y_max=300000), use_container_width=True)
 
 st.markdown("**Recovery Rate vs. 2018**")
 rec = {'Rate':['2025 Overall','2025 Mainland','2025 Intl','2026 Overall','2026 Mainland','2026 Intl'],
@@ -198,7 +198,7 @@ st.subheader("🛫 HK Resident Outbound: Daily Departures")
 outbound_2018 = [OUTBOUND_2018[1]]+[OUTBOUND_2018[m] for m in range(3,13)]
 outbound_s = {'2018': outbound_2018}
 for yr in [2024,2025,2026]: outbound_s[str(yr)] = get_series(monthly,yr,'outbound_daily')
-st.plotly_chart(make_monthly_chart("Daily Departures of Hong Kong Residents", outbound_s, 200000), use_container_width=True)
+st.plotly_chart(make_monthly_chart("Daily Departures of Hong Kong Residents", outbound_s, 0, 500000), use_container_width=True)
 
 gr = {'Rate':['2025 vs 2024','2026 vs 2025'],'Jan&Feb':['+19%','+12%'],'Mar':['+4%','+9%'],
     'Apr':['+33%','+6%'],'May':['+18%','+8%'],'Jun':['+5%','—'],'Jul':['+10%','—'],
