@@ -317,9 +317,9 @@ if hd and hd['avg']:
         for i, g in enumerate(hd['growth']):
             fig_bar.add_annotation(x=(i+i+1)/2, y=(bar_vals[i]+bar_vals[i+1])/2,
                 text=f"<b>{g}</b>", showarrow=False,
-                font=dict(size=12, color='#fff' if i==len(hd['growth'])-1 else '#555'),
-                bgcolor='#3A7976' if i==len(hd['growth'])-1 else '#fff',
-                bordercolor='#3A7976' if i==len(hd['growth'])-1 else '#555',
+                font=dict(size=12, color='#333'),
+                bgcolor='#fff',
+                bordercolor='#555',
                 borderwidth=1.5, borderpad=4)
         fig_bar.update_layout(yaxis=dict(visible=False), showlegend=False,
             margin=dict(l=20,r=20,t=30,b=40), height=380, template='plotly_white')
@@ -382,6 +382,7 @@ if hd and hd['avg']:
                 font=dict(size=10, color=CP_COLORS[cp_type]))
 
     fig_cp.update_layout(
+        xaxis=dict(type='category'),
         yaxis=dict(tickformat=',', range=[0, None]),
         showlegend=False,
         margin=dict(l=60,r=250,t=60,b=40), height=420, template='plotly_white',
