@@ -217,7 +217,7 @@ def get_holiday_data(arrivals_df, daily_in, holiday_name):
 
 
 # ==================== MAIN APP ====================
-st.title("✈️ Golden Week Traffic Trends")
+st.title("✈️ IBOB Traffic Trends")
 st.caption("Inbound | Outbound | Holiday Analysis")
 
 col1, _ = st.columns([1,5])
@@ -322,7 +322,7 @@ st.caption("Source: Immigration Department.")
 
 # ===== HOLIDAY ANALYSIS =====
 st.markdown("---")
-st.subheader("🎌 Holiday Period Analysis")
+st.subheader("✨ Holiday Period Analysis")
 selected_holiday = st.selectbox("Select Holiday", list(HOLIDAY_PERIODS.keys()), index=0)
 
 hd = get_holiday_data(arrivals_df, daily_in, selected_holiday)
