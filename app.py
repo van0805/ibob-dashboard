@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import requests
 from io import StringIO
+from datetime import timezone, timedelta
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -64,7 +65,8 @@ def fetch_data():
                 df = pd.read_csv(StringIO(r.text), encoding='utf-8-sig')
                 if len(df) > 100:
                     source = "GitHub cache" if "github" in url else "gov website"
-                    return df, f"{datetime.now().strftime('%Y-%m-%d %H:%M')} ({source})"
+                    hkt = datetime.now(timezone(timedelta(hours=8)))
+                    return df, f"{hkt.strftime('%Y-%m-%d %H:%M')} HKT ({source})"
         except:
             continue
     return None, "Error: Could not fetch data"
@@ -217,8 +219,8 @@ def get_holiday_data(arrivals_df, daily_in, holiday_name):
 
 
 # ==================== MAIN APP ====================
-st.title("✈️ IBOB Traffic Trends")
-st.caption("Inbound | Outbound | Holiday Analysis")
+st.title("IBOB Traffic Trends")
+st.caption("Inbound | Outbound | Holiday Analysis | Data Analytics")
 
 col1, _ = st.columns([1,5])
 with col1:
