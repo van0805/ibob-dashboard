@@ -23,22 +23,69 @@ GOV_DATA_URL = "https://www.immd.gov.hk/opendata/eng/transport/immigration_clear
 INBOUND_2018 = {1:172050,2:188606,3:161133,4:176720,5:159774,6:158059,7:176168,8:190192,9:157285,10:189823,11:199834,12:212460}
 OUTBOUND_2018 = {1:236056,2:236056,3:269689,4:252022,5:247218,6:257566,7:250747,8:245103,9:240199,10:249645,11:263862,12:278927}
 
-# Holiday periods (CN mainland holidays)
+# Holiday periods - all 2026 holidays with 3+ days
 HOLIDAY_PERIODS = {
-    'Labour Day (劳动节)': {
-        2024: {'start':'2024-05-01','end':'2024-05-05'},
-        2025: {'start':'2025-05-01','end':'2025-05-05'},
-        2026: {'start':'2026-05-01','end':'2026-05-05'},
+    'inbound': {
+        'CNY (春节)': {
+            2024: {'start':'2024-02-10','end':'2024-02-17'},
+            2025: {'start':'2025-01-28','end':'2025-02-04'},
+            2026: {'start':'2026-02-15','end':'2026-02-23'},
+        },
+        'Qingming (清明)': {
+            2024: {'start':'2024-04-04','end':'2024-04-06'},
+            2025: {'start':'2025-04-04','end':'2025-04-06'},
+            2026: {'start':'2026-04-04','end':'2026-04-06'},
+        },
+        'Labour Day (劳动节)': {
+            2024: {'start':'2024-05-01','end':'2024-05-05'},
+            2025: {'start':'2025-05-01','end':'2025-05-05'},
+            2026: {'start':'2026-05-01','end':'2026-05-05'},
+        },
+        'Dragon Boat (端午)': {
+            2025: {'start':'2025-05-31','end':'2025-06-02'},
+            2026: {'start':'2026-06-19','end':'2026-06-21'},
+        },
+        'Mid-Autumn (中秋)': {
+            2024: {'start':'2024-09-15','end':'2024-09-17'},
+            2025: {'start':'2025-10-04','end':'2025-10-06'},
+            2026: {'start':'2026-09-25','end':'2026-09-27'},
+        },
+        'National Day (国庆)': {
+            2024: {'start':'2024-10-01','end':'2024-10-07'},
+            2025: {'start':'2025-10-01','end':'2025-10-08'},
+            2026: {'start':'2026-10-01','end':'2026-10-07'},
+        },
     },
-    'CNY (春节)': {
-        2024: {'start':'2024-02-10','end':'2024-02-17'},
-        2025: {'start':'2025-01-28','end':'2025-02-04'},
-        2026: {'start':'2026-02-15','end':'2026-02-23'},
-    },
-    'National Day (国庆)': {
-        2024: {'start':'2024-10-01','end':'2024-10-07'},
-        2025: {'start':'2025-10-01','end':'2025-10-08'},
-        2026: {'start':'2026-10-01','end':'2026-10-07'},
+    'outbound': {
+        'CNY (春节)': {
+            2024: {'start':'2024-02-10','end':'2024-02-14'},
+            2025: {'start':'2025-01-29','end':'2025-01-31'},
+            2026: {'start':'2026-02-17','end':'2026-02-19'},
+        },
+        'Easter (复活节)': {
+            2024: {'start':'2024-03-29','end':'2024-04-01'},
+            2025: {'start':'2025-04-18','end':'2025-04-21'},
+            2026: {'start':'2026-04-03','end':'2026-04-06'},
+        },
+        'Labour Day (劳动节)': {
+            2024: {'start':'2024-05-01','end':'2024-05-05'},
+            2025: {'start':'2025-05-01','end':'2025-05-05'},
+            2026: {'start':'2026-05-01','end':'2026-05-05'},
+        },
+        'Dragon Boat (端午)': {
+            2025: {'start':'2025-05-31','end':'2025-06-02'},
+            2026: {'start':'2026-06-19','end':'2026-06-21'},
+        },
+        'National Day (国庆)': {
+            2024: {'start':'2024-10-01','end':'2024-10-07'},
+            2025: {'start':'2025-10-01','end':'2025-10-08'},
+            2026: {'start':'2026-10-01','end':'2026-10-07'},
+        },
+        'Christmas (圣诞)': {
+            2024: {'start':'2024-12-24','end':'2024-12-26'},
+            2025: {'start':'2025-12-24','end':'2025-12-26'},
+            2026: {'start':'2026-12-25','end':'2026-12-27'},
+        },
     },
 }
 
@@ -115,7 +162,7 @@ def process_raw(df):
     daily_out['Month'] = daily_out['Date'].dt.month
 
     # Keep arrivals with CP detail for holiday analysis
-    return daily_in, daily_out, arrivals
+    return daily_in, daily_out, arrivals, departures
 
 
 def get_monthly(daily_df, value_col):
@@ -169,34 +216,50 @@ def make_chart(title, series_dict, y_min=0, y_max=None):
     return fig
 
 
-def get_holiday_data(arrivals_df, daily_in, holiday_name):
-    """Compute holiday stats dynamically from CSV data."""
-    if arrivals_df is None or daily_in is None:
+def get_holiday_data(raw_arrivals_df, raw_departures_df, daily_in, daily_out, holiday_name, direction='inbound'):
+    """Compute holiday stats dynamically from CSV data.
+    direction: 'inbound' = Mainland tourist arrivals, 'outbound' = HK resident departures
+    """
+    if direction == 'inbound':
+        if raw_arrivals_df is None or daily_in is None:
+            return None
+        daily_df = daily_in
+        value_col = 'mainland_arrival'
+        cp_df = raw_arrivals_df
+        cp_value_col = 'Mainland Visitors'
+    else:  # outbound
+        if raw_departures_df is None or daily_out is None:
+            return None
+        daily_df = daily_out
+        value_col = 'hk_departure'
+        cp_df = raw_departures_df
+        cp_value_col = 'Hong Kong Residents'
+
+    periods = HOLIDAY_PERIODS.get(direction, {}).get(holiday_name, {})
+    if not periods:
         return None
-    periods = HOLIDAY_PERIODS.get(holiday_name, {})
     result = {'avg':{},'days':{},'daily':{},'cp_data':{}}
 
     for year, p in periods.items():
         start, end = pd.to_datetime(p['start']), pd.to_datetime(p['end'])
 
-        # Daily mainland arrivals
-        mask = (daily_in['Date'] >= start) & (daily_in['Date'] <= end)
-        subset = daily_in[mask]
+        mask = (daily_df['Date'] >= start) & (daily_df['Date'] <= end)
+        subset = daily_df[mask]
         if subset.empty:
             continue
 
         n_days = len(subset)
-        avg = subset['mainland_arrival'].mean()
-        daily_vals = subset['mainland_arrival'].tolist()
+        avg = subset[value_col].mean()
+        daily_vals = subset[value_col].tolist()
 
         result['avg'][str(year)] = int(avg)
         result['days'][str(year)] = n_days
         result['daily'][str(year)] = [int(v) for v in daily_vals]
 
         # Control point breakdown
-        cp_mask = (arrivals_df['Date'] >= start) & (arrivals_df['Date'] <= end)
-        cp_subset = arrivals_df[cp_mask]
-        cp_daily = cp_subset.groupby('Control Point')['Mainland Visitors'].sum() / n_days
+        cp_mask = (cp_df['Date'] >= start) & (cp_df['Date'] <= end)
+        cp_subset = cp_df[cp_mask]
+        cp_daily = cp_subset.groupby('Control Point')[cp_value_col].sum() / n_days
         result['cp_data'][str(year)] = cp_daily.to_dict()
 
     # Compute growth rates
@@ -234,7 +297,7 @@ if fetch_time and not fetch_time.startswith("Error"):
 else:
     st.error(f"⚠️ {fetch_time}")
 
-daily_in, daily_out, arrivals_df = process_raw(raw_df.copy() if raw_df is not None else None)
+daily_in, daily_out, arrivals_df, departures_df = process_raw(raw_df.copy() if raw_df is not None else None)
 monthly_in = get_monthly(daily_in, 'tourist_arrival')
 monthly_out = get_monthly(daily_out, 'hk_departure')
 
@@ -325,15 +388,25 @@ st.caption("Source: Immigration Department.")
 # ===== HOLIDAY ANALYSIS =====
 st.markdown("---")
 st.subheader("✨ Holiday Period Analysis")
-selected_holiday = st.selectbox("Select Holiday", list(HOLIDAY_PERIODS.keys()), index=0)
 
-hd = get_holiday_data(arrivals_df, daily_in, selected_holiday)
+# Direction filter
+direction = st.radio("Select Direction", ['Inbound (Mainland Tourist Arrival)', 'Outbound (HK Resident Departure)'], horizontal=True)
+dir_key = 'inbound' if 'Inbound' in direction else 'outbound'
+
+# Holiday selector (changes based on direction)
+holiday_options = list(HOLIDAY_PERIODS.get(dir_key, {}).keys())
+selected_holiday = st.selectbox("Select Holiday", holiday_options, index=0)
+
+hd = get_holiday_data(arrivals_df, departures_df, daily_in, daily_out, selected_holiday, dir_key)
 
 if hd and hd['avg']:
     col_bar, col_line = st.columns([1, 1.3])
 
     with col_bar:
-        st.markdown(f"**Average Daily Mainland Arrival** during {selected_holiday}")
+        if dir_key == 'inbound':
+            st.markdown(f"**Average Daily Mainland Arrival** during {selected_holiday}")
+        else:
+            st.markdown(f"**Average Daily HK Resident Departure** during {selected_holiday}")
         years_avail = sorted(hd['avg'].keys())
         bar_vals = [hd['avg'][yr] for yr in years_avail]
         bar_colors = [COLORS.get(yr,'#c8c8c8') if yr=='2026' else '#c8c8c8' for yr in years_avail]
@@ -354,7 +427,10 @@ if hd and hd['avg']:
         st.plotly_chart(fig_bar, use_container_width=True)
 
     with col_line:
-        st.markdown(f"**Daily Mainland Arrival** by day during {selected_holiday}")
+        if dir_key == 'inbound':
+            st.markdown(f"**Daily Mainland Arrival** by day during {selected_holiday}")
+        else:
+            st.markdown(f"**Daily HK Resident Departure** by day during {selected_holiday}")
         fig_daily = go.Figure()
         for yr in years_avail:
             data = hd['daily'].get(yr, [])
@@ -442,7 +518,7 @@ if hd and hd['avg']:
         yaxis=dict(tickformat=',', range=[0, None]),
         showlegend=False,
         margin=dict(l=60,r=250,t=60,b=40), height=420, template='plotly_white',
-        title=dict(text=f"Avg. Daily Mainland Visitors by Control Point during {selected_holiday}*<br><sup>(Immigration Department Data)          Growth^ (26 vs 25)</sup>",
+        title=dict(text=f"Avg. Daily {'Mainland Visitors' if dir_key=='inbound' else 'HK Departures'} by Control Point during {selected_holiday}*<br><sup>(Immigration Department Data)          Growth^ (26 vs 25)</sup>",
                    font=dict(size=16)))
     st.plotly_chart(fig_cp, use_container_width=True)
 
