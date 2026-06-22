@@ -449,7 +449,7 @@ if hd and hd['avg']:
         fig_daily.update_layout(yaxis=dict(tickformat=','), showlegend=True,
             legend=dict(orientation='h',yanchor='bottom',y=1.02),
             margin=dict(l=50,r=20,t=30,b=40), height=380, template='plotly_white',
-            yaxis_range=[0, 300000])
+            yaxis_range=[0, None])
         st.plotly_chart(fig_daily, use_container_width=True)
 
     # Control Point Chart
