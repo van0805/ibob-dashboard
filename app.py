@@ -13,7 +13,12 @@ st.set_page_config(page_title="IBOB Dashboard", page_icon="✈️", layout="wide
 
 # ===== CONFIG =====
 CACHE_TTL = 604800  # 7 days
-COLORS = {'2018':'#A6A6A6','2024':'#CF9E9A','2025':'#B9A779','2026':'#3A7976'}
+# Dynamic color palette — auto-assigns colors by position (latest year gets teal)
+_YEAR_PALETTE = ['#CF9E9A','#B9A779','#3A7976']  # [oldest, middle, latest]
+BASELINE_COLOR = '#A6A6A6'  # for 2018 baseline (dashed line)
+def get_year_colors(years):
+    """Assign colors to a list of years (excluding baseline). Latest year gets the bold color."""
+    return {str(yr): _YEAR_PALETTE[i] if i < len(_YEAR_PALETTE) else '#333' for i, yr in enumerate(years)}
 GITHUB_USER = "van0805"
 GITHUB_REPO = "ibob-dashboard"
 GITHUB_CSV_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/data/daily_passenger_traffic.csv"
@@ -27,66 +32,66 @@ OUTBOUND_2018 = {1:236056,2:236056,3:269689,4:252022,5:247218,6:257566,7:250747,
 HOLIDAY_PERIODS = {
     'inbound': {
         'CNY (春节)': {
-            2024: {'start':'2024-02-10','end':'2024-02-17'},
-            2025: {'start':'2025-01-28','end':'2025-02-04'},
-            2026: {'start':'2026-02-15','end':'2026-02-23'},
+            2024: {'start':'2024-02-10','end':'2024-02-17', 'note':'8d'},
+            2025: {'start':'2025-01-28','end':'2025-02-04', 'note':'8d'},
+            2026: {'start':'2026-02-17','end':'2026-02-23', 'note':'7d'},
         },
         'Qingming (清明)': {
-            2024: {'start':'2024-04-04','end':'2024-04-06'},
-            2025: {'start':'2025-04-04','end':'2025-04-06'},
-            2026: {'start':'2026-04-04','end':'2026-04-06'},
+            2024: {'start':'2024-04-04','end':'2024-04-06', 'note':'3d (Thu-Sat)'},
+            2025: {'start':'2025-04-04','end':'2025-04-06', 'note':'3d (Fri-Sun)'},
+            2026: {'start':'2026-04-04','end':'2026-04-06', 'note':'3d (Sat-Mon)'},
         },
         'Labour Day (劳动节)': {
-            2024: {'start':'2024-05-01','end':'2024-05-05'},
-            2025: {'start':'2025-05-01','end':'2025-05-05'},
-            2026: {'start':'2026-05-01','end':'2026-05-05'},
+            2024: {'start':'2024-05-01','end':'2024-05-05', 'note':'5d (Wed-Sun)'},
+            2025: {'start':'2025-05-01','end':'2025-05-05', 'note':'5d (Thu-Mon)'},
+            2026: {'start':'2026-05-01','end':'2026-05-05', 'note':'5d (Fri-Tue)'},
         },
         'Dragon Boat (端午)': {
-            2024: {'start':'2024-06-08','end':'2024-06-10'},
-            2025: {'start':'2025-05-31','end':'2025-06-02'},
-            2026: {'start':'2026-06-19','end':'2026-06-21'},
+            2024: {'start':'2024-06-08','end':'2024-06-10', 'note':'3d (Sat-Mon)'},
+            2025: {'start':'2025-05-31','end':'2025-06-02', 'note':'3d (Sat-Mon)'},
+            2026: {'start':'2026-06-19','end':'2026-06-21', 'note':'3d (Fri-Sun)'},
         },
         'Mid-Autumn (中秋)': {
-            2024: {'start':'2024-09-15','end':'2024-09-17'},
-            2025: {'start':'2025-10-04','end':'2025-10-06'},
-            2026: {'start':'2026-09-25','end':'2026-09-27'},
+            2024: {'start':'2024-09-15','end':'2024-09-17', 'note':'3d (Sun-Tue)'},
+            2025: {'start':'2025-10-04','end':'2025-10-06', 'note':'3d (merged with National Day)'},
+            2026: {'start':'2026-09-25','end':'2026-09-27', 'note':'3d (Fri-Sun)'},
         },
         'National Day (国庆)': {
-            2024: {'start':'2024-10-01','end':'2024-10-07'},
-            2025: {'start':'2025-10-01','end':'2025-10-08'},
-            2026: {'start':'2026-10-01','end':'2026-10-07'},
+            2024: {'start':'2024-10-01','end':'2024-10-07', 'note':'7d (Tue-Mon)'},
+            2025: {'start':'2025-10-01','end':'2025-10-08', 'note':'8d (merged with Mid-Autumn)'},
+            2026: {'start':'2026-10-01','end':'2026-10-07', 'note':'7d (Thu-Wed)'},
         },
     },
     'outbound': {
         'CNY (春节)': {
-            2024: {'start':'2024-02-10','end':'2024-02-14'},
-            2025: {'start':'2025-01-29','end':'2025-01-31'},
-            2026: {'start':'2026-02-17','end':'2026-02-19'},
+            2024: {'start':'2024-02-10','end':'2024-02-14', 'note':'5d (Sat-Wed)'},
+            2025: {'start':'2025-01-29','end':'2025-02-02', 'note':'5d (Wed-Sun)'},
+            2026: {'start':'2026-02-17','end':'2026-02-22', 'note':'6d (Tue-Sun)'},
         },
         'Easter (复活节)': {
-            2024: {'start':'2024-03-29','end':'2024-04-01'},
-            2025: {'start':'2025-04-18','end':'2025-04-21'},
-            2026: {'start':'2026-04-03','end':'2026-04-06'},
+            2024: {'start':'2024-03-29','end':'2024-04-01', 'note':'4d (Fri-Mon)'},
+            2025: {'start':'2025-04-18','end':'2025-04-21', 'note':'4d (Fri-Mon)'},
+            2026: {'start':'2026-04-03','end':'2026-04-07', 'note':'5d (Fri-Tue, Easter+Ching Ming overlap)'},
         },
         'Labour Day (劳动节)': {
-            2024: {'start':'2024-05-01','end':'2024-05-05'},
-            2025: {'start':'2025-05-01','end':'2025-05-05'},
-            2026: {'start':'2026-05-01','end':'2026-05-05'},
+            2024: {'start':'2024-05-01','end':'2024-05-01', 'note':'1d only (Wed)'},
+            2025: {'start':'2025-05-01','end':'2025-05-01', 'note':'1d only (Thu)'},
+            2026: {'start':'2026-05-01','end':'2026-05-03', 'note':'3d (Fri-Sun)'},
         },
         'Dragon Boat (端午)': {
-            2024: {'start':'2024-06-08','end':'2024-06-10'},
-            2025: {'start':'2025-05-31','end':'2025-06-02'},
-            2026: {'start':'2026-06-19','end':'2026-06-21'},
+            2024: {'start':'2024-06-08','end':'2024-06-10', 'note':'3d (Sat-Mon)'},
+            2025: {'start':'2025-05-31','end':'2025-06-01', 'note':'2d only (Sat-Sun, Tuen Ng on Sat)'},
+            2026: {'start':'2026-06-19','end':'2026-06-21', 'note':'3d (Fri-Sun)'},
         },
         'National Day (国庆)': {
-            2024: {'start':'2024-10-01','end':'2024-10-07'},
-            2025: {'start':'2025-10-01','end':'2025-10-08'},
-            2026: {'start':'2026-10-01','end':'2026-10-07'},
+            2024: {'start':'2024-10-01','end':'2024-10-01', 'note':'1d only (Tue)'},
+            2025: {'start':'2025-10-01','end':'2025-10-01', 'note':'1d only (Wed)'},
+            2026: {'start':'2026-10-01','end':'2026-10-01', 'note':'1d only (Thu)'},
         },
         'Christmas (圣诞)': {
-            2024: {'start':'2024-12-24','end':'2024-12-26'},
-            2025: {'start':'2025-12-24','end':'2025-12-26'},
-            2026: {'start':'2026-12-25','end':'2026-12-27'},
+            2024: {'start':'2024-12-25','end':'2024-12-26', 'note':'2d (Wed-Thu)'},
+            2025: {'start':'2025-12-25','end':'2025-12-28', 'note':'4d (Thu-Sun)'},
+            2026: {'start':'2026-12-25','end':'2026-12-27', 'note':'3d (Fri-Sun)'},
         },
     },
 }
@@ -124,7 +129,7 @@ def fetch_data():
 def process_raw(df):
     """Process raw CSV into daily inbound/outbound/cp data."""
     if df is None:
-        return None, None, None
+        return None, None, None, None
 
     df.columns = df.columns.str.strip()
     df.rename(columns={df.columns[0]: 'Date'}, inplace=True)
@@ -141,14 +146,9 @@ def process_raw(df):
     arrivals = df[df['Arrival / Departure'] == 'Arrival'].copy()
     departures = df[df['Arrival / Departure'] == 'Departure'].copy()
 
-    # Daily inbound (sum all control points)
-    daily_in = arrivals.groupby('Date').agg(
-        tourist_arrival=('Mainland Visitors', lambda x: x.sum() + arrivals.loc[x.index, 'Other Visitors'].sum()),
-        mainland_arrival=('Mainland Visitors', 'sum')
-    ).reset_index()
-    # Simpler: recalculate
+    # Daily inbound (sum all control points per day)
     arrivals['tourist_total'] = arrivals['Mainland Visitors'] + arrivals['Other Visitors']
-    daily_in = arrivals.groupby('Date').agg(
+    daily_in = arrivals.groupby('Date', as_index=False).agg(
         tourist_arrival=('tourist_total','sum'),
         mainland_arrival=('Mainland Visitors','sum'),
         intl_arrival=('Other Visitors','sum')
@@ -206,7 +206,7 @@ def make_chart(title, series_dict, y_min=0, y_max=None):
     for yr, data in series_dict.items():
         valid = [d if d else None for d in data]
         fig.add_trace(go.Scatter(x=months, y=valid, name=yr, mode='lines',
-            line=dict(color=COLORS.get(yr,'#333'), width=3 if yr=='2026' else 2.5,
+            line=dict(color=COLORS.get(yr,'#333'), width=3 if yr==str(CURRENT_YEAR) else 2.5,
                       dash='dash' if yr=='2018' else 'solid', shape='spline', smoothing=1.0),
             hovertemplate='%{x}<br>'+yr+': <b>%{customdata}K</b><extra></extra>',
             customdata=[int(round(v/1000)) if v else 0 for v in valid],
@@ -303,13 +303,22 @@ daily_in, daily_out, arrivals_df, departures_df = process_raw(raw_df.copy() if r
 monthly_in = get_monthly(daily_in, 'tourist_arrival')
 monthly_out = get_monthly(daily_out, 'hk_departure')
 
+# Dynamic year detection — auto-determine which years to display
+if daily_in is not None:
+    _all_years = sorted(daily_in['Year'].unique())
+    DISPLAY_YEARS = [yr for yr in _all_years if yr >= 2024][-3:]  # latest 3 years from 2024+
+else:
+    DISPLAY_YEARS = [2024, 2025, 2026]
+CURRENT_YEAR = DISPLAY_YEARS[-1] if DISPLAY_YEARS else 2026
+COLORS = {**get_year_colors(DISPLAY_YEARS), '2018': BASELINE_COLOR}
+
 # ===== INBOUND =====
 st.markdown("---")
 st.subheader("🛬 Inbound Tourist Trend: Recovery Rate vs 2018")
 
 inbound_2018 = [(INBOUND_2018[1]+INBOUND_2018[2])/2]+[INBOUND_2018[m] for m in range(3,13)]
 inbound_s = {'2018': inbound_2018}
-for yr in [2024,2025,2026]:
+for yr in DISPLAY_YEARS:
     inbound_s[str(yr)] = get_series(monthly_in, yr)
 st.plotly_chart(make_chart("Daily Arrival of All Tourists by Month", inbound_s, y_max=300000), use_container_width=True)
 
@@ -349,7 +358,7 @@ def calc_recovery(monthly_data, baseline_dict, year):
     return rates
 
 rec_rows = []
-for yr in [2025, 2026]:
+for yr in DISPLAY_YEARS[-2:]:  # latest 2 years for recovery comparison
     rec_rows.append([f'{yr} Overall'] + calc_recovery(monthly_in, INBOUND_2018, yr))
     rec_rows.append([f'{yr} Mainland'] + calc_recovery(monthly_mainland, MAINLAND_2018, yr))
     rec_rows.append([f'{yr} Intl'] + calc_recovery(monthly_intl, INTL_2018, yr))
@@ -363,16 +372,16 @@ st.caption("Source: Transportation Dept; Tourism Board; Immigration Dept.")
 st.markdown("---")
 st.subheader("🛫 HK Resident Outbound: Daily Departures")
 
-outbound_2018 = [OUTBOUND_2018[1]]+[OUTBOUND_2018[m] for m in range(3,13)]
+outbound_2018 = [(OUTBOUND_2018[1]+OUTBOUND_2018[2])/2]+[OUTBOUND_2018[m] for m in range(3,13)]
 outbound_s = {'2018': outbound_2018}
-for yr in [2024,2025,2026]:
+for yr in DISPLAY_YEARS:
     outbound_s[str(yr)] = get_series(monthly_out, yr)
 st.plotly_chart(make_chart("Daily Departures of Hong Kong Residents", outbound_s, 0, 500000), use_container_width=True)
 
 # Growth rate table (computed dynamically)
 st.markdown("**YoY Growth Rate**")
 gr_rows = []
-for yr in [2025,2026]:
+for yr in DISPLAY_YEARS[-2:]:  # latest 2 years for YoY growth
     prev_s = outbound_s[str(yr-1)]
     curr_s = outbound_s[str(yr)]
     rates = []
@@ -399,6 +408,16 @@ dir_key = 'inbound' if 'Inbound' in direction else 'outbound'
 holiday_options = list(HOLIDAY_PERIODS.get(dir_key, {}).keys())
 selected_holiday = st.selectbox("Select Holiday", holiday_options, index=0)
 
+# Show holiday duration notes per year
+holiday_periods_for_selected = HOLIDAY_PERIODS.get(dir_key, {}).get(selected_holiday, {})
+notes_parts = []
+for yr in sorted(holiday_periods_for_selected.keys()):
+    note = holiday_periods_for_selected[yr].get('note', '')
+    if note:
+        notes_parts.append(f"**{yr}**: {note}")
+if notes_parts:
+    st.caption("📅 " + " · ".join(notes_parts))
+
 hd = get_holiday_data(arrivals_df, departures_df, daily_in, daily_out, selected_holiday, dir_key)
 
 if hd and hd['avg']:
@@ -411,7 +430,7 @@ if hd and hd['avg']:
             st.markdown(f"**Average Daily HK Resident Departure** during {selected_holiday}")
         years_avail = sorted(hd['avg'].keys())
         bar_vals = [hd['avg'][yr] for yr in years_avail]
-        bar_colors = [COLORS.get(yr,'#c8c8c8') if yr=='2026' else '#c8c8c8' for yr in years_avail]
+        bar_colors = [COLORS.get(yr,'#c8c8c8') if yr==str(CURRENT_YEAR) else '#c8c8c8' for yr in years_avail]
         bar_labels = [f"{yr}<br>{hd['days'][yr]}d" for yr in years_avail]
 
         fig_bar = go.Figure(go.Bar(x=bar_labels, y=bar_vals, marker_color=bar_colors,
@@ -520,7 +539,7 @@ if hd and hd['avg']:
         yaxis=dict(tickformat=',', range=[0, None]),
         showlegend=False,
         margin=dict(l=60,r=250,t=60,b=40), height=420, template='plotly_white',
-        title=dict(text=f"Avg. Daily {'Mainland Visitors' if dir_key=='inbound' else 'HK Departures'} by Control Point during {selected_holiday}*<br><sup>(Immigration Department Data)          Growth^ (26 vs 25)</sup>",
+        title=dict(text=f"Avg. Daily {'Mainland Visitors' if dir_key=='inbound' else 'HK Departures'} by Control Point during {selected_holiday}*<br><sup>(Immigration Department Data)          Growth^ ({str(CURRENT_YEAR)[-2:]} vs {str(CURRENT_YEAR-1)[-2:]})</sup>",
                    font=dict(size=16)))
     st.plotly_chart(fig_cp, use_container_width=True)
 
