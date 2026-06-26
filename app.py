@@ -29,12 +29,18 @@ INBOUND_2018 = {1:172050,2:188606,3:161133,4:176720,5:159774,6:158059,7:176168,8
 OUTBOUND_2018 = {1:236056,2:236056,3:269689,4:252022,5:247218,6:257566,7:250747,8:245103,9:240199,10:249645,11:263862,12:278927}
 
 # Holiday periods - all 2026 holidays with 3+ days
+# For CNY: 'lunar_offset' = offset from 初一 (0=初一, -1=除夕, 1=初二, etc.)
+# This aligns the x-axis across years by lunar date
+# Note: offset -1 is always 除夕 (may be 廿九 or 三十 depending on year)
+# offset -2 is "除夕前一天" (廿八 if no 三十, or 廿九 if 三十 exists)
+_LUNAR_LABELS = {-3:'廿七', -2:'廿八', -1:'除夕', 0:'初一', 1:'初二', 2:'初三', 3:'初四', 4:'初五', 5:'初六', 6:'初七', 7:'初八', 8:'初九', 9:'初十'}
+
 HOLIDAY_PERIODS = {
     'inbound': {
         'CNY (春节)': {
-            2024: {'start':'2024-02-10','end':'2024-02-17', 'note':'8d'},
-            2025: {'start':'2025-01-28','end':'2025-02-04', 'note':'8d'},
-            2026: {'start':'2026-02-17','end':'2026-02-23', 'note':'7d'},
+            2024: {'start':'2024-02-10','end':'2024-02-17', 'note':'8d (初一至初八)', 'lunar_offset': 0},   # 官方假期不含除夕
+            2025: {'start':'2025-01-28','end':'2025-02-04', 'note':'8d (除夕至初七)', 'lunar_offset': -1},  # 官方含除夕
+            2026: {'start':'2026-02-15','end':'2026-02-23', 'note':'9d (廿八、除夕至初七)', 'lunar_offset': -2},  # 2026无三十，廿九即除夕
         },
         'Qingming (清明)': {
             2024: {'start':'2024-04-04','end':'2024-04-06', 'note':'3d (Thu-Sat)'},
@@ -64,9 +70,9 @@ HOLIDAY_PERIODS = {
     },
     'outbound': {
         'CNY (春节)': {
-            2024: {'start':'2024-02-10','end':'2024-02-14', 'note':'5d (Sat-Wed)'},
-            2025: {'start':'2025-01-29','end':'2025-02-02', 'note':'5d (Wed-Sun)'},
-            2026: {'start':'2026-02-17','end':'2026-02-22', 'note':'6d (Tue-Sun)'},
+            2024: {'start':'2024-02-10','end':'2024-02-14', 'note':'5d (初一至初五)', 'lunar_offset': 0},
+            2025: {'start':'2025-01-29','end':'2025-02-02', 'note':'5d (初一至初五)', 'lunar_offset': 0},
+            2026: {'start':'2026-02-17','end':'2026-02-22', 'note':'6d (初一至初六)', 'lunar_offset': 0},
         },
         'Easter (复活节)': {
             2024: {'start':'2024-03-29','end':'2024-04-01', 'note':'4d (Fri-Mon)'},
@@ -273,12 +279,37 @@ def get_holiday_data(raw_arrivals_df, raw_departures_df, daily_in, daily_out, ho
         growth.append(f"+{pct:.0%}" if pct >= 0 else f"{pct:.0%}")
     result['growth'] = growth
 
-    # Day labels
+    # Day labels — use lunar dates for CNY, Gregorian for others
     if years_avail:
-        latest = years_avail[-1]
-        n = len(result['daily'].get(latest, []))
-        start_date = pd.to_datetime(periods[int(latest)]['start'])
-        result['day_labels'] = [(start_date + pd.Timedelta(days=i)).strftime('%d %b') for i in range(n)]
+        # Check if this holiday has lunar_offset (i.e., CNY)
+        has_lunar = any('lunar_offset' in periods.get(int(yr), {}) for yr in years_avail)
+
+        if has_lunar:
+            # Align all years by lunar day index
+            # lunar_offset: -1=除夕, 0=初一, 1=初二, etc.
+            # Find the range that covers all years
+            min_lunar = min(periods[int(yr)].get('lunar_offset', 0) for yr in years_avail)
+            max_lunar_end = max(
+                periods[int(yr)].get('lunar_offset', 0) + len(result['daily'].get(yr, [])) - 1
+                for yr in years_avail if result['daily'].get(yr)
+            )
+            # Build aligned daily data (pad with None where a year doesn't have data for that lunar day)
+            n_total = max_lunar_end - min_lunar + 1
+            for yr in years_avail:
+                offset = periods[int(yr)].get('lunar_offset', 0) - min_lunar
+                raw = result['daily'].get(yr, [])
+                padded = [None] * n_total
+                for j, v in enumerate(raw):
+                    padded[offset + j] = v
+                result['daily'][yr] = padded
+            # Lunar day labels
+            result['day_labels'] = [_LUNAR_LABELS.get(min_lunar + i, f"Day{i+1}") for i in range(n_total)]
+        else:
+            # Default: Gregorian day labels from the latest year
+            latest = years_avail[-1]
+            n = len(result['daily'].get(latest, []))
+            start_date = pd.to_datetime(periods[int(latest)]['start'])
+            result['day_labels'] = [(start_date + pd.Timedelta(days=i)).strftime('%d %b') for i in range(n)]
 
     return result
 
@@ -456,13 +487,14 @@ if hd and hd['avg']:
         for yr in years_avail:
             data = hd['daily'].get(yr, [])
             if data:
-                labels = hd['day_labels'][:len(data)] if 'day_labels' in hd else [f"Day {i+1}" for i in range(len(data))]
+                labels = hd['day_labels'][:len(data)] if 'day_labels' in hd else [f"Day {j+1}" for j in range(len(data))]
                 fig_daily.add_trace(go.Scatter(x=labels, y=data, name=yr, mode='lines+markers',
                     line=dict(color=COLORS.get(yr,'#999'), width=3 if yr==years_avail[-1] else 2,
                               dash='dash' if yr==years_avail[0] else 'solid', shape='spline'),
                     marker=dict(size=6),
                     hovertemplate=yr+': <b>%{customdata}K</b><extra></extra>',
-                    customdata=[int(round(v/1000)) for v in data]))
+                    customdata=[int(round(v/1000)) if v is not None else 0 for v in data],
+                    connectgaps=False))
         # Vertical reference lines
         max_len = max(len(hd['daily'].get(yr,[])) for yr in years_avail)
         for i in range(max_len):
