@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -70,9 +71,9 @@ HOLIDAY_PERIODS = {
     },
     'outbound': {
         'CNY (春节)': {
-            2024: {'start':'2024-02-10','end':'2024-02-14', 'note':'5d (初一至初五)', 'lunar_offset': 0},
-            2025: {'start':'2025-01-29','end':'2025-02-02', 'note':'5d (初一至初五)', 'lunar_offset': 0},
-            2026: {'start':'2026-02-17','end':'2026-02-22', 'note':'6d (初一至初六)', 'lunar_offset': 0},
+            2024: {'start':'2024-02-10','end':'2024-02-17', 'note':'8d (初一至初八)', 'lunar_offset': 0},
+            2025: {'start':'2025-01-28','end':'2025-02-04', 'note':'8d (除夕至初七)', 'lunar_offset': -1},
+            2026: {'start':'2026-02-15','end':'2026-02-23', 'note':'9d (廿八、除夕至初七)', 'lunar_offset': -2},
         },
         'Easter (复活节)': {
             2024: {'start':'2024-03-29','end':'2024-04-01', 'note':'4d (Fri-Mon)'},
