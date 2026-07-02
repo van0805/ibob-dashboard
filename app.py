@@ -8,6 +8,7 @@ import requests
 from io import StringIO
 from datetime import timezone, timedelta
 from pathlib import Path
+import calendar
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -243,16 +244,33 @@ def _intl_others4_total(market_totals):
     return sum(v for m, v in market_totals.items() if m not in _PPT_LISTED_MARKETS)
 
 
-def _intl_baseline_2018(df, markets):
-    """Full-year 2018 baseline in thousands, from merged international_visitors.csv."""
-    totals = _intl_year_totals(df, BASELINE_YEAR, months=list(range(1, 13)))
-    if not totals:
+def _days_in_period(year, months):
+    if not months:
+        return 0
+    return sum(calendar.monthrange(int(year), int(m))[1] for m in months)
+
+
+def _period_market_totals(df, year, months):
+    totals = _intl_year_totals(df, year, months=months)
+    return totals, _days_in_period(year, months)
+
+
+def _period_daily_avg(totals, period_days, markets):
+    if not totals or period_days <= 0:
         return None
     if markets == "others4":
-        return _intl_others4_total(totals) / 1000
-    if isinstance(markets, list):
-        return _intl_row_total(totals, markets) / 1000
-    return None
+        total_val = _intl_others4_total(totals)
+    elif isinstance(markets, list):
+        total_val = _intl_row_total(totals, markets)
+    else:
+        return None
+    return total_val / period_days
+
+
+def _intl_baseline_2018(df, markets, months):
+    """Period-matched 2018 baseline daily average from international_visitors.csv."""
+    totals, period_days = _period_market_totals(df, BASELINE_YEAR, months=months)
+    return _period_daily_avg(totals, period_days, markets)
 
 
 def _pct_change(current_k, baseline_k):
@@ -270,14 +288,14 @@ def _fmt_pct(pct):
     return f"{sign}{pct:.0%}"
 
 
-def _fmt_count_k(value):
+def _fmt_daily_avg(value):
     if value is None:
         return "—"
     return f"{int(round(value)):,}"
 
 
-def build_ppt_summary(df, target_year=None, compare_year=None):
-    """Build PPT summary table matching Macro Update_IBOB Master TABLE 2."""
+def build_ppt_summary(df, target_year=None, target_month=None, compare_year_1=None, compare_year_2=None):
+    """Build international visitors summary with period daily averages."""
     if df is None or df.empty:
         return None, None, None
 
@@ -290,22 +308,39 @@ def build_ppt_summary(df, target_year=None, compare_year=None):
 
     if target_year is None:
         target_year = int(available_years[-1])
-    if compare_year is None:
-        # Keep 2018 as fixed baseline only; do not auto-use it as YoY compare.
-        prior = [y for y in available_years if y < target_year and y != BASELINE_YEAR]
-        compare_year = int(prior[-1]) if prior else None
-    elif compare_year == BASELINE_YEAR:
-        compare_year = None
+    year_months = sorted(df.loc[df['year'] == target_year, 'month'].dropna().unique())
+    if not year_months:
+        return None, None, None
 
-    target_months = sorted(df.loc[df['year'] == target_year, 'month'].dropna().unique())
+    if target_month is None:
+        target_month = int(year_months[-1])
+    target_month = int(target_month)
+    target_months = [m for m in year_months if int(m) <= target_month]
     if not target_months:
         return None, None, None
 
-    period_label = f"Jan–{_month_abbr(target_months[-1])} {target_year}" if len(target_months) < 12 else f"Jan–Dec {target_year}"
-    prior_label = f"vs {compare_year}" if compare_year else "vs prior year"
+    period_range_label = f"Jan–{_month_abbr(target_month)}"
+    period_label = f"{period_range_label} {target_year}"
+    period_daily_label = f"{period_label} Daily Avg"
 
-    curr_totals = _intl_year_totals(df, target_year, target_months)
-    prev_totals = _intl_year_totals(df, compare_year, target_months) if compare_year else {}
+    compare_pool = [
+        int(y) for y in available_years
+        if int(y) < target_year and int(y) != BASELINE_YEAR and int(y) >= 2024
+    ]
+    if compare_year_1 not in compare_pool:
+        compare_year_1 = compare_pool[-1] if compare_pool else None
+    compare_pool_2 = [y for y in compare_pool if y != compare_year_1]
+    if compare_year_2 not in compare_pool_2:
+        compare_year_2 = compare_pool_2[-1] if compare_pool_2 else None
+
+    curr_totals, curr_days = _period_market_totals(df, target_year, target_months)
+    comp1_totals, comp1_days = _period_market_totals(df, compare_year_1, target_months) if compare_year_1 else ({}, 0)
+    comp2_totals, comp2_days = _period_market_totals(df, compare_year_2, target_months) if compare_year_2 else ({}, 0)
+
+    comp1_daily_label = f"{period_range_label} {compare_year_1} Daily Avg" if compare_year_1 else None
+    comp2_daily_label = f"{period_range_label} {compare_year_2} Daily Avg" if compare_year_2 else None
+    comp1_vs_label = f"vs {compare_year_1}" if compare_year_1 else None
+    comp2_vs_label = f"vs {compare_year_2}" if compare_year_2 else None
 
     rows = []
     row_styles = []
@@ -315,16 +350,23 @@ def build_ppt_summary(df, target_year=None, compare_year=None):
         elif spec == "g7_total":
             markets = list(_G7_MARKETS)
         elif spec == "others4":
-            curr_k = _intl_others4_total(curr_totals) / 1000
-            prev_k = _intl_others4_total(prev_totals) / 1000 if prev_totals else None
-            base_k = _intl_baseline_2018(df, "others4")
-            rows.append({
+            curr_val = _period_daily_avg(curr_totals, curr_days, "others4")
+            comp1_val = _period_daily_avg(comp1_totals, comp1_days, "others4") if compare_year_1 else None
+            comp2_val = _period_daily_avg(comp2_totals, comp2_days, "others4") if compare_year_2 else None
+            base_val = _intl_baseline_2018(df, "others4", months=target_months)
+            row = {
                 "Category": category,
                 "Market": label,
-                period_label: _fmt_count_k(curr_k),
-                prior_label: _fmt_pct(_pct_change(curr_k, prev_k)),
-                "vs 2018": _fmt_pct(_pct_change(curr_k, base_k)),
-            })
+                period_daily_label: _fmt_daily_avg(curr_val),
+            }
+            if compare_year_1:
+                row[comp1_daily_label] = _fmt_daily_avg(comp1_val)
+                row[comp1_vs_label] = _fmt_pct(_pct_change(curr_val, comp1_val))
+            if compare_year_2:
+                row[comp2_daily_label] = _fmt_daily_avg(comp2_val)
+                row[comp2_vs_label] = _fmt_pct(_pct_change(curr_val, comp2_val))
+            row["vs 2018"] = _fmt_pct(_pct_change(curr_val, base_val))
+            rows.append(row)
             row_styles.append({"kind": "others"})
             continue
         elif spec == "grand_total":
@@ -332,17 +374,24 @@ def build_ppt_summary(df, target_year=None, compare_year=None):
         else:
             markets = spec
 
-        curr_k = _intl_row_total(curr_totals, markets) / 1000
-        prev_k = _intl_row_total(prev_totals, markets) / 1000 if prev_totals else None
-        base_k = _intl_baseline_2018(df, markets)
+        curr_val = _period_daily_avg(curr_totals, curr_days, markets)
+        comp1_val = _period_daily_avg(comp1_totals, comp1_days, markets) if compare_year_1 else None
+        comp2_val = _period_daily_avg(comp2_totals, comp2_days, markets) if compare_year_2 else None
+        base_val = _intl_baseline_2018(df, markets, months=target_months)
 
-        rows.append({
+        row = {
             "Category": category,
             "Market": label,
-            period_label: _fmt_count_k(curr_k),
-            prior_label: _fmt_pct(_pct_change(curr_k, prev_k)),
-            "vs 2018": _fmt_pct(_pct_change(curr_k, base_k)),
-        })
+            period_daily_label: _fmt_daily_avg(curr_val),
+        }
+        if compare_year_1:
+            row[comp1_daily_label] = _fmt_daily_avg(comp1_val)
+            row[comp1_vs_label] = _fmt_pct(_pct_change(curr_val, comp1_val))
+        if compare_year_2:
+            row[comp2_daily_label] = _fmt_daily_avg(comp2_val)
+            row[comp2_vs_label] = _fmt_pct(_pct_change(curr_val, comp2_val))
+        row["vs 2018"] = _fmt_pct(_pct_change(curr_val, base_val))
+        rows.append(row)
 
         if spec == "asean_total":
             row_styles.append({"kind": "asean_total"})
@@ -355,11 +404,18 @@ def build_ppt_summary(df, target_year=None, compare_year=None):
         else:
             row_styles.append({"kind": "default"})
 
-    columns = ["Category", "Market", period_label, prior_label, "vs 2018"]
+    columns = ["Category", "Market", period_daily_label]
+    if compare_year_1:
+        columns += [comp1_daily_label, comp1_vs_label]
+    if compare_year_2:
+        columns += [comp2_daily_label, comp2_vs_label]
+    columns += ["vs 2018"]
     summary_df = pd.DataFrame(rows, columns=columns)
     return summary_df, row_styles, {
         "target_year": target_year,
-        "compare_year": compare_year,
+        "target_month": target_month,
+        "compare_year_1": compare_year_1,
+        "compare_year_2": compare_year_2,
         "months": target_months,
         "period_label": period_label,
     }
@@ -690,54 +746,72 @@ rec_df = pd.DataFrame(rec_rows, columns=['Recovery Rate vs 2018']+months_h+['FY'
 st.dataframe(rec_df, use_container_width=True, hide_index=True)
 st.caption("Source: Transportation Dept; Tourism Board; Immigration Dept.")
 
-# ===== INTERNATIONAL VISITORS =====
-st.markdown("---")
-st.subheader("🌏 International Visitor Arrivals")
+def render_international_visitors_section():
+    """Render international visitors table at page bottom."""
+    st.markdown("---")
+    st.subheader("🌏 International Visitor Arrivals")
 
-intl_df, intl_fetch_time = fetch_international_data()
-if intl_df is not None:
-    st.caption(f"📅 {intl_fetch_time} | Rows: {len(intl_df)}")
+    intl_df, intl_fetch_time = fetch_international_data()
+    if intl_df is not None:
+        st.caption(f"📅 {intl_fetch_time} | Rows: {len(intl_df)}")
 
-    intl_years = sorted(pd.to_numeric(intl_df['year'], errors='coerce').dropna().unique().astype(int))
-    icol1, icol2 = st.columns(2)
-    with icol1:
-        ppt_year = st.selectbox("Summary year", intl_years, index=len(intl_years) - 1, key="ppt_year")
-    with icol2:
-        # 2018 is always shown as a fixed baseline column, not a compare filter option.
-        prior_options = [y for y in intl_years if y < ppt_year and y != BASELINE_YEAR]
-        ppt_compare = st.selectbox(
-            "Compare vs",
-            prior_options if prior_options else ["—"],
-            index=len(prior_options) - 1 if prior_options else 0,
-            key="ppt_compare",
-            disabled=not prior_options,
+        intl_years = sorted(pd.to_numeric(intl_df['year'], errors='coerce').dropna().unique().astype(int))
+        icol1, icol2, icol3, icol4 = st.columns(4)
+        with icol1:
+            curr_year = st.selectbox("Current year", intl_years, index=len(intl_years) - 1, key="curr_year")
+        curr_months = sorted(pd.to_numeric(intl_df.loc[intl_df['year'] == curr_year, 'month'], errors='coerce').dropna().unique().astype(int))
+        with icol2:
+            curr_month = st.selectbox("Current month", curr_months, index=len(curr_months) - 1, key="curr_month")
+
+        compare_candidates = [y for y in intl_years if y < curr_year and y != BASELINE_YEAR and y >= 2024]
+        with icol3:
+            compare_year_1 = st.selectbox(
+                "Comparison year 1",
+                compare_candidates if compare_candidates else ["—"],
+                index=len(compare_candidates) - 1 if compare_candidates else 0,
+                key="compare_year_1",
+                disabled=not compare_candidates,
+            )
+        compare_candidates_2 = [y for y in compare_candidates if y != compare_year_1]
+        with icol4:
+            compare_year_2 = st.selectbox(
+                "Comparison year 2",
+                compare_candidates_2 if compare_candidates_2 else ["—"],
+                index=len(compare_candidates_2) - 1 if compare_candidates_2 else 0,
+                key="compare_year_2",
+                disabled=not compare_candidates_2,
+            )
+
+        summary_df, row_styles, meta = build_ppt_summary(
+            intl_df,
+            target_year=int(curr_year),
+            target_month=int(curr_month),
+            compare_year_1=int(compare_year_1) if compare_candidates else None,
+            compare_year_2=int(compare_year_2) if compare_candidates_2 else None,
         )
 
-    compare_year = int(ppt_compare) if prior_options else None
-    summary_df, row_styles, meta = build_ppt_summary(intl_df, target_year=int(ppt_year), compare_year=compare_year)
-
-    if summary_df is not None:
-        month_note = f"{len(meta['months'])} months" if len(meta['months']) < 12 else "full year"
-        st.markdown(
-            f"**Visitor Arrivals Summary** — {meta['period_label']} ({month_note})"
-        )
-        st.dataframe(style_ppt_summary(summary_df, row_styles), use_container_width=True, hide_index=True)
-        st.caption(
-            "Source: HKTB PartnerNet (COR Arrivals). "
-            "¹ ASEAN Others = Malaysia + Vietnam. "
-            "² G7 Others = Canada, France, Germany, Netherlands. "
-            "⁴ Remaining markets (e.g. India, Russia). "
-            "vs 2018 uses full-year 2018 rows in international_visitors.csv (from Book export)."
-        )
+        if summary_df is not None:
+            month_note = f"{len(meta['months'])} months" if len(meta['months']) < 12 else "full year"
+            st.markdown(
+                f"**Visitor Arrivals Summary (Daily Average)** — {meta['period_label']} ({month_note})"
+            )
+            st.dataframe(style_ppt_summary(summary_df, row_styles), use_container_width=True, hide_index=True)
+            st.caption(
+                "Source: HKTB PartnerNet (COR Arrivals). "
+                "¹ ASEAN Others = Malaysia + Vietnam. "
+                "² G7 Others = Canada, France, Germany, Netherlands. "
+                "⁴ Remaining markets (e.g. India, Russia). "
+                "vs 2018 uses full-year 2018 rows in international_visitors.csv (from Book export)."
+            )
+        else:
+            st.info("Not enough data to build the summary for the selected year.")
     else:
-        st.info("Not enough data to build the summary for the selected year.")
-else:
-    st.info(
-        "International visitor data not yet available. "
-        "Click **Refresh Data** above if the CSV was recently updated, "
-        "or wait for the monthly GitHub Actions job."
-    )
-    st.caption(f"⚠️ {intl_fetch_time}")
+        st.info(
+            "International visitor data not yet available. "
+            "Click **Refresh Data** above if the CSV was recently updated, "
+            "or wait for the monthly GitHub Actions job."
+        )
+        st.caption(f"⚠️ {intl_fetch_time}")
 
 # ===== OUTBOUND =====
 st.markdown("---")
@@ -919,3 +993,6 @@ else:
     st.info("No data available for the selected holiday period.")
 
 st.caption(f"Source: Immigration Department Open Data | [Gov CSV]({GOV_DATA_URL})")
+
+# ===== INTERNATIONAL VISITORS (BOTTOM) =====
+render_international_visitors_section()
