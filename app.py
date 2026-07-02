@@ -26,7 +26,6 @@ GITHUB_REPO = "ibob-dashboard"
 GITHUB_CSV_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/data/daily_passenger_traffic.csv"
 GITHUB_INTL_CSV_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/data/international_visitors.csv"
 LOCAL_INTL_CSV = Path(__file__).resolve().parent / "data" / "international_visitors.csv"
-LOCAL_INTL_BASELINE_2018 = Path(__file__).resolve().parent / "data" / "international_visitors_baseline_2018.csv"
 GOV_DATA_URL = "https://www.immd.gov.hk/opendata/eng/transport/immigration_clearance/statistics_on_daily_passenger_traffic.csv"
 BASELINE_YEAR = 2018
 
@@ -181,22 +180,8 @@ def _parse_international_csv(csv_text, source_label):
     df.columns = df.columns.str.strip()
     if df.empty or 'year' not in df.columns:
         return None, None
-    df = _merge_intl_baseline(df)
     hkt = datetime.now(timezone(timedelta(hours=8)))
     return df, f"{hkt.strftime('%Y-%m-%d %H:%M')} HKT ({source_label})"
-
-
-def _merge_intl_baseline(df):
-    """Attach committed 2018 baseline rows from Book(Auto-update).csv."""
-    if LOCAL_INTL_BASELINE_2018.exists():
-        baseline = pd.read_csv(LOCAL_INTL_BASELINE_2018, encoding='utf-8-sig')
-        baseline.columns = baseline.columns.str.strip()
-        df = df.copy()
-        df['year'] = pd.to_numeric(df['year'], errors='coerce')
-        df = df[df['year'] != BASELINE_YEAR]
-        df = pd.concat([baseline, df], ignore_index=True)
-    df.columns = df.columns.str.strip()
-    return df.sort_values(['year', 'month']).reset_index(drop=True)
 
 
 def fetch_international_data():
@@ -738,8 +723,7 @@ if intl_df is not None:
             "¹ ASEAN Others = Malaysia + Vietnam. "
             "² G7 Others = Canada, France, Germany, Netherlands. "
             "⁴ Remaining markets (e.g. India, Russia). "
-            "vs 2018 uses full-year 2018 baselines from Book(Auto-update).csv "
-            "(stored in data/international_visitors_baseline_2018.csv)."
+            "vs 2018 uses full-year 2018 rows in international_visitors.csv (from Book export)."
         )
     else:
         st.info("Not enough data to build the summary for the selected year.")
