@@ -9,6 +9,7 @@ from io import StringIO
 from datetime import timezone, timedelta
 from pathlib import Path
 import calendar
+from html import escape
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -37,6 +38,31 @@ INTL_MARKETS = [
     "USA", "Vietnam", "Middle East",
 ]
 
+# Market grouping reference from workbook mapping
+MARKET_GROUP_MAP = {
+    "Australia": "Australia",
+    "Canada": "G7",
+    "France": "G7",
+    "Germany": "G7",
+    "India": "India",
+    "Indonesia": "ASEAN",
+    "Japan": "G7",
+    "Macau SAR": "Macau SAR",
+    "Mainland": "Mainland China",
+    "Malaysia": "ASEAN",
+    "Netherlands": "Others",
+    "Philippines": "ASEAN",
+    "Russia": "Russia",
+    "Singapore": "ASEAN",
+    "South Korea": "South Korea",
+    "Taiwan": "Taiwan",
+    "Thailand": "ASEAN",
+    "United Kingdom": "G7",
+    "USA": "G7",
+    "Vietnam": "ASEAN",
+    "Middle East": "Middle East",
+}
+
 # PPT summary row layout (matches Macro Update_IBOB Master TABLE 2)
 PPT_SUMMARY_ROWS = [
     ("", "Taiwan", ["Taiwan"]),
@@ -47,20 +73,20 @@ PPT_SUMMARY_ROWS = [
     ("ASEAN", "Indonesia", ["Indonesia"]),
     ("ASEAN", "Singapore", ["Singapore"]),
     ("ASEAN", "the Others¹", ["Malaysia", "Vietnam"]),
-    ("", "ASEAN Total", "asean_total"),
+    ("ASEAN", "ASEAN Total", "asean_total"),
     ("G7", "USA", ["USA"]),
     ("G7", "Japan", ["Japan"]),
     ("G7", "United Kingdom", ["United Kingdom"]),
-    ("G7", "the Others²", ["Canada", "France", "Germany", "Netherlands"]),
-    ("", "G7 Total", "g7_total"),
+    ("G7", "the Others²", ["Canada", "France", "Germany"]),
+    ("G7", "G7 Total", "g7_total"),
     ("", "Australia", ["Australia"]),
     ("", "Middle East³", ["Middle East"]),
     ("", "the Others⁴", "others4"),
     ("", "Total", "grand_total"),
 ]
 
-_ASEAN_MARKETS = {"Philippines", "Thailand", "Indonesia", "Singapore", "Malaysia", "Vietnam"}
-_G7_MARKETS = {"USA", "Japan", "United Kingdom", "Canada", "France", "Germany", "Netherlands"}
+_ASEAN_MARKETS = {m for m, g in MARKET_GROUP_MAP.items() if g == "ASEAN"}
+_G7_MARKETS = {m for m, g in MARKET_GROUP_MAP.items() if g == "G7"}
 _PPT_LISTED_MARKETS = (
     {"Taiwan", "South Korea", "Macau SAR", "Australia", "Middle East"}
     | _ASEAN_MARKETS | _G7_MARKETS
@@ -404,6 +430,34 @@ def build_ppt_summary(df, target_year=None, target_month=None, compare_year_1=No
         else:
             row_styles.append({"kind": "default"})
 
+    # Merge-look grouping column: show group label once and hide inner borders per block.
+    categories = [row.get("Category", "") for row in rows]
+    n = len(categories)
+    for i, cat in enumerate(categories):
+        if not cat:
+            row_styles[i]["category_cell"] = "none"
+            continue
+        prev_same = i > 0 and categories[i - 1] == cat
+        next_same = i < n - 1 and categories[i + 1] == cat
+        if not prev_same and next_same:
+            row_styles[i]["category_cell"] = "start"
+        elif prev_same and next_same:
+            row_styles[i]["category_cell"] = "middle"
+        elif prev_same and not next_same:
+            row_styles[i]["category_cell"] = "end"
+        else:
+            row_styles[i]["category_cell"] = "single"
+
+    prev_category = None
+    for row in rows:
+        cat = row.get("Category", "")
+        if cat and cat == prev_category:
+            row["Category"] = ""
+        elif cat:
+            prev_category = cat
+        else:
+            prev_category = None
+
     columns = ["Category", "Market", period_daily_label]
     if compare_year_1:
         columns += [comp1_daily_label, comp1_vs_label]
@@ -458,6 +512,15 @@ def style_ppt_summary(summary_df, row_styles):
             styles = ["font-weight: 700"] * len(summary_df.columns)
         elif kind == "group_child":
             styles[1] = "padding-left: 1.25em"
+        category_cell = row_styles[row_idx].get("category_cell", "none")
+        if category_cell == "start":
+            styles[0] = "font-weight: 700; border-bottom: none;"
+        elif category_cell == "middle":
+            styles[0] = "border-top: none; border-bottom: none;"
+        elif category_cell == "end":
+            styles[0] = "border-top: none;"
+        elif category_cell == "single":
+            styles[0] = "font-weight: 700;"
         return styles
 
     styler = summary_df.style
@@ -477,6 +540,103 @@ def style_ppt_summary(summary_df, row_styles):
     ], overwrite=False)
     styler = styler.hide(axis="index")
     return styler
+
+
+def render_ppt_summary_html(summary_df, row_styles):
+    """Render summary table as HTML with real rowspans for category blocks."""
+    columns = list(summary_df.columns)
+    pct_cols = {c for c in columns if c.startswith("vs ")}
+
+    def _pct_color(val):
+        if not isinstance(val, str) or val == "—":
+            return "#111"
+        try:
+            num = float(val.replace("%", "").replace("+", ""))
+            if num > 0:
+                return "#2e7d32"
+            if num < 0:
+                return "#8b2942"
+        except ValueError:
+            pass
+        return "#111"
+
+    # Pre-compute rowspan for each category start row.
+    rowspans = {}
+    i = 0
+    while i < len(row_styles):
+        cstate = row_styles[i].get("category_cell", "none")
+        if cstate == "start":
+            span = 1
+            j = i + 1
+            while j < len(row_styles):
+                nxt = row_styles[j].get("category_cell", "none")
+                if nxt in ("middle", "end"):
+                    span += 1
+                    if nxt == "end":
+                        break
+                    j += 1
+                    continue
+                break
+            rowspans[i] = span
+        elif cstate == "single":
+            rowspans[i] = 1
+        i += 1
+
+    html = []
+    html.append("""
+<style>
+.intl-summary-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.intl-summary-table th { background:#B9A779; color:#fff; font-weight:700; text-align:center; padding:6px 8px; border:1px solid #d4d4d4; }
+.intl-summary-table td { border:1px solid #d4d4d4; padding:4px 8px; text-align:right; }
+.intl-summary-table td.col-category, .intl-summary-table td.col-market { text-align:left; }
+.intl-summary-table td.group-child { padding-left:1.25em; }
+.intl-summary-table tr.asean-total td.col-market, .intl-summary-table tr.asean-total td.col-main { font-weight:700; border:2px solid #2e5c3e; }
+.intl-summary-table tr.g7-total td.col-market, .intl-summary-table tr.g7-total td.col-main { font-weight:700; border:2px solid #8b2942; }
+.intl-summary-table tr.grand-total td { font-weight:700; }
+</style>
+""")
+    html.append('<table class="intl-summary-table">')
+    html.append("<thead><tr>")
+    for col in columns:
+        html.append(f"<th>{escape(str(col))}</th>")
+    html.append("</tr></thead><tbody>")
+
+    for idx in range(len(summary_df)):
+        row = summary_df.iloc[idx]
+        kind = row_styles[idx].get("kind", "default")
+        tr_class = {
+            "asean_total": "asean-total",
+            "g7_total": "g7-total",
+            "grand_total": "grand-total",
+        }.get(kind, "")
+        html.append(f'<tr class="{tr_class}">')
+
+        # Category cell with real rowspan.
+        cstate = row_styles[idx].get("category_cell", "none")
+        if cstate in ("start", "single"):
+            span = rowspans.get(idx, 1)
+            cat_val = escape(str(row.get("Category", "")))
+            html.append(f'<td class="col-category" rowspan="{span}">{cat_val}</td>')
+        elif cstate == "none":
+            # Keep table columns aligned for rows that do not belong to any category block.
+            html.append('<td class="col-category"></td>')
+
+        # Market cell
+        market_cls = "col-market group-child" if kind == "group_child" else "col-market"
+        html.append(f'<td class="{market_cls}">{escape(str(row.get("Market", "")))}</td>')
+
+        # Remaining value columns
+        for col in columns[2:]:
+            val = row.get(col, "")
+            val_str = "—" if pd.isna(val) else str(val)
+            color = _pct_color(val_str) if col in pct_cols else "#111"
+            extra_cls = " col-main" if col == columns[2] else ""
+            html.append(f'<td class="{extra_cls.strip()}" style="color:{color};">{escape(val_str)}</td>')
+
+        html.append("</tr>")
+
+    html.append("</tbody></table>")
+    st.markdown("".join(html), unsafe_allow_html=True)
 
 
 def process_raw(df):
@@ -795,11 +955,11 @@ def render_international_visitors_section():
             st.markdown(
                 f"**Visitor Arrivals Summary (Daily Average)** — {meta['period_label']} ({month_note})"
             )
-            st.dataframe(style_ppt_summary(summary_df, row_styles), use_container_width=True, hide_index=True)
+            render_ppt_summary_html(summary_df, row_styles)
             st.caption(
                 "Source: HKTB PartnerNet (COR Arrivals). "
                 "¹ ASEAN Others = Malaysia + Vietnam. "
-                "² G7 Others = Canada, France, Germany, Netherlands. "
+                "² G7 Others = Canada, France, Germany. "
                 "⁴ Remaining markets (e.g. India, Russia). "
                 "vs 2018 uses full-year 2018 rows in international_visitors.csv (from Book export)."
             )
