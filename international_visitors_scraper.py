@@ -347,9 +347,22 @@ def main():
         csv_path = Path(args.output_csv)
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         markets = list(MARKET_MAP.values())
+        fieldnames = ["year", "month"] + markets
+
+        # Merge with existing CSV so prior years remain available for YoY comparisons
+        existing_rows = []
+        if csv_path.exists():
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                existing_rows = [
+                    row for row in reader
+                    if str(row.get("year")) != str(args.year)
+                ]
+
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["year", "month"] + markets)
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
+            writer.writerows(existing_rows)
             for month in sorted(scraped):
                 row_data = {"year": args.year, "month": month}
                 row_data.update({m: scraped[month].get(m, "") for m in markets})

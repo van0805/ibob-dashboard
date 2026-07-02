@@ -11,6 +11,7 @@ env/
 
 # Data (auto-generated)
 data/daily_passenger_traffic.csv
+data/international_visitors.csv
 data/last_updated.txt
 
 # OS

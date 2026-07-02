@@ -60,7 +60,11 @@ jobs:
         env:
           PARTNERNET_USER: ${{ secrets.PARTNERNET_USER }}
           PARTNERNET_PASS: ${{ secrets.PARTNERNET_PASS }}
-        run: python international_visitors_scraper.py --output-csv data/international_visitors.csv
+        run: |
+          YEAR=$(date +%Y)
+          PRIOR=$((YEAR - 1))
+          python international_visitors_scraper.py --year $PRIOR --output-csv data/international_visitors.csv
+          python international_visitors_scraper.py --year $YEAR --output-csv data/international_visitors.csv
 
       - name: Commit updated visitor data
         run: |
