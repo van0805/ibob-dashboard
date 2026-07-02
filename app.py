@@ -7,6 +7,7 @@ from datetime import datetime
 import requests
 from io import StringIO
 from datetime import timezone, timedelta
+from pathlib import Path
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -23,7 +24,56 @@ def get_year_colors(years):
 GITHUB_USER = "van0805"
 GITHUB_REPO = "ibob-dashboard"
 GITHUB_CSV_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/data/daily_passenger_traffic.csv"
+GITHUB_INTL_CSV_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/data/international_visitors.csv"
+LOCAL_INTL_CSV = Path(__file__).resolve().parent / "data" / "international_visitors.csv"
 GOV_DATA_URL = "https://www.immd.gov.hk/opendata/eng/transport/immigration_clearance/statistics_on_daily_passenger_traffic.csv"
+
+# 2018 full-year COR arrivals (thousands) — sync with Macro Update_IBOB Master
+INTL_VISITOR_2018_K = {
+    "Taiwan": 5472, "South Korea": 2300, "Macau SAR": 1800,
+    "Philippines": 1200, "Thailand": 700, "Indonesia": 580, "Singapore": 700,
+    "Malaysia": 2200, "Vietnam": 1955,
+    "USA": 2100, "Japan": 2000, "United Kingdom": 900,
+    "Canada": 700, "France": 500, "Germany": 550, "Netherlands": 333,
+    "Australia": 1300, "Middle East": 1100,
+    "India": 2500, "Russia": 1703,
+}
+
+INTL_MARKETS = [
+    "Australia", "Canada", "France", "Germany", "India", "Indonesia",
+    "Japan", "Macau SAR", "Malaysia", "Netherlands", "Philippines", "Russia",
+    "Singapore", "South Korea", "Taiwan", "Thailand", "United Kingdom",
+    "USA", "Vietnam", "Middle East",
+]
+
+# PPT summary row layout (matches Macro Update_IBOB Master TABLE 2)
+PPT_SUMMARY_ROWS = [
+    ("", "Taiwan", ["Taiwan"]),
+    ("", "South Korea", ["South Korea"]),
+    ("", "Macau SAR", ["Macau SAR"]),
+    ("ASEAN", "Philippines", ["Philippines"]),
+    ("ASEAN", "Thailand", ["Thailand"]),
+    ("ASEAN", "Indonesia", ["Indonesia"]),
+    ("ASEAN", "Singapore", ["Singapore"]),
+    ("ASEAN", "the Others¹", ["Malaysia", "Vietnam"]),
+    ("", "ASEAN Total", "asean_total"),
+    ("G7", "USA", ["USA"]),
+    ("G7", "Japan", ["Japan"]),
+    ("G7", "United Kingdom", ["United Kingdom"]),
+    ("G7", "the Others²", ["Canada", "France", "Germany", "Netherlands"]),
+    ("", "G7 Total", "g7_total"),
+    ("", "Australia", ["Australia"]),
+    ("", "Middle East³", ["Middle East"]),
+    ("", "the Others⁴", "others4"),
+    ("", "Total", "grand_total"),
+]
+
+_ASEAN_MARKETS = {"Philippines", "Thailand", "Indonesia", "Singapore", "Malaysia", "Vietnam"}
+_G7_MARKETS = {"USA", "Japan", "United Kingdom", "Canada", "France", "Germany", "Netherlands"}
+_PPT_LISTED_MARKETS = (
+    {"Taiwan", "South Korea", "Macau SAR", "Australia", "Middle East"}
+    | _ASEAN_MARKETS | _G7_MARKETS
+)
 
 # 2018 hardcoded (not in gov CSV which starts 2021)
 INBOUND_2018 = {1:172050,2:188606,3:161133,4:176720,5:159774,6:158059,7:176168,8:190192,9:157285,10:189823,11:199834,12:212460}
@@ -131,6 +181,232 @@ def fetch_data():
         except:
             continue
     return None, "Error: Could not fetch data"
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def fetch_international_data():
+    """Fetch international visitor CSV from GitHub cache, then local file."""
+    for label, url in [("GitHub cache", GITHUB_INTL_CSV_URL)]:
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            r = requests.get(url, headers=headers, timeout=60, verify=False)
+            if r.status_code == 200 and len(r.text) > 100:
+                df = pd.read_csv(StringIO(r.text), encoding='utf-8-sig')
+                if not df.empty and 'year' in df.columns:
+                    hkt = datetime.now(timezone(timedelta(hours=8)))
+                    return df, f"{hkt.strftime('%Y-%m-%d %H:%M')} HKT ({label})"
+        except Exception:
+            continue
+
+    if LOCAL_INTL_CSV.exists():
+        try:
+            df = pd.read_csv(LOCAL_INTL_CSV, encoding='utf-8-sig')
+            if not df.empty:
+                hkt = datetime.now(timezone(timedelta(hours=8)))
+                return df, f"{hkt.strftime('%Y-%m-%d %H:%M')} HKT (local file)"
+        except Exception:
+            pass
+
+    return None, "No international visitor data available"
+
+
+def _intl_year_totals(df, year, months=None):
+    """Sum monthly arrivals by market for a year (optionally limited to months)."""
+    yd = df[df['year'] == year].copy()
+    if yd.empty:
+        return {}
+    if months is not None:
+        yd = yd[yd['month'].isin(months)]
+    totals = {}
+    for market in INTL_MARKETS:
+        if market not in yd.columns:
+            continue
+        vals = pd.to_numeric(yd[market], errors='coerce')
+        if vals.notna().any():
+            totals[market] = int(vals.sum())
+    return totals
+
+
+def _intl_row_total(market_totals, markets):
+    return sum(market_totals.get(m, 0) for m in markets)
+
+
+def _intl_others4_total(market_totals):
+    return sum(v for m, v in market_totals.items() if m not in _PPT_LISTED_MARKETS)
+
+
+def _intl_baseline_2018(markets):
+    if markets == "others4":
+        listed = sum(INTL_VISITOR_2018_K.get(m, 0) for m in _PPT_LISTED_MARKETS)
+        total = sum(INTL_VISITOR_2018_K.values())
+        return max(total - listed, 0)
+    if isinstance(markets, list):
+        return sum(INTL_VISITOR_2018_K.get(m, 0) for m in markets)
+    return 0
+
+
+def _pct_change(current_k, baseline_k):
+    if current_k is None or baseline_k in (None, 0):
+        return None
+    return (current_k - baseline_k) / baseline_k
+
+
+def _fmt_pct(pct):
+    if pct is None:
+        return "—"
+    if abs(pct) < 0.005:
+        return "0%"
+    sign = "+" if pct > 0 else ""
+    return f"{sign}{pct:.0%}"
+
+
+def _fmt_count_k(value):
+    if value is None:
+        return "—"
+    return f"{int(round(value)):,}"
+
+
+def build_ppt_summary(df, target_year=None, compare_year=None):
+    """Build PPT summary table matching Macro Update_IBOB Master TABLE 2."""
+    if df is None or df.empty:
+        return None, None, None
+
+    df = df.copy()
+    df['year'] = pd.to_numeric(df['year'], errors='coerce').astype('Int64')
+    df['month'] = pd.to_numeric(df['month'], errors='coerce').astype('Int64')
+    available_years = sorted(df['year'].dropna().unique())
+    if not len(available_years):
+        return None, None, None
+
+    if target_year is None:
+        target_year = int(available_years[-1])
+    if compare_year is None:
+        prior = [y for y in available_years if y < target_year]
+        compare_year = int(prior[-1]) if prior else None
+
+    target_months = sorted(df.loc[df['year'] == target_year, 'month'].dropna().unique())
+    if not target_months:
+        return None, None, None
+
+    curr_totals = _intl_year_totals(df, target_year, target_months)
+    prev_totals = _intl_year_totals(df, compare_year, target_months) if compare_year else {}
+
+    rows = []
+    row_styles = []
+    for category, label, spec in PPT_SUMMARY_ROWS:
+        if spec == "asean_total":
+            markets = list(_ASEAN_MARKETS)
+        elif spec == "g7_total":
+            markets = list(_G7_MARKETS)
+        elif spec == "others4":
+            curr_k = _intl_others4_total(curr_totals) / 1000
+            prev_k = _intl_others4_total(prev_totals) / 1000 if prev_totals else None
+            base_k = _intl_baseline_2018("others4")
+            rows.append({
+                "Category": category,
+                "Market": label,
+                "YTD": _fmt_count_k(curr_k),
+                "vs_prior": _fmt_pct(_pct_change(curr_k, prev_k)),
+                "vs_2018": _fmt_pct(_pct_change(curr_k, base_k)),
+            })
+            row_styles.append({"kind": "others"})
+            continue
+        elif spec == "grand_total":
+            markets = INTL_MARKETS
+        else:
+            markets = spec
+
+        curr_k = _intl_row_total(curr_totals, markets) / 1000
+        prev_k = _intl_row_total(prev_totals, markets) / 1000 if prev_totals else None
+        base_k = _intl_baseline_2018(markets)
+
+        rows.append({
+            "Category": category,
+            "Market": label,
+            "YTD": _fmt_count_k(curr_k),
+            "vs_prior": _fmt_pct(_pct_change(curr_k, prev_k)),
+            "vs_2018": _fmt_pct(_pct_change(curr_k, base_k)),
+        })
+
+        if spec == "asean_total":
+            row_styles.append({"kind": "asean_total"})
+        elif spec == "g7_total":
+            row_styles.append({"kind": "g7_total"})
+        elif spec == "grand_total":
+            row_styles.append({"kind": "grand_total"})
+        elif category:
+            row_styles.append({"kind": "group_child"})
+        else:
+            row_styles.append({"kind": "default"})
+
+    period_label = f"Jan–{_month_abbr(target_months[-1])} {target_year}" if len(target_months) < 12 else f"Jan–Dec {target_year}"
+    prior_label = f"vs {compare_year}" if compare_year else "vs prior year"
+    columns = ["Category", "Market", period_label, prior_label, "vs 2018"]
+    summary_df = pd.DataFrame(rows, columns=columns)
+    return summary_df, row_styles, {
+        "target_year": target_year,
+        "compare_year": compare_year,
+        "months": target_months,
+        "period_label": period_label,
+    }
+
+
+def _month_abbr(month):
+    return ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][int(month)]
+
+
+def style_ppt_summary(summary_df, row_styles):
+    """Apply PPT-style formatting: header, subtotals, green/red percentages."""
+    pct_cols = [c for c in summary_df.columns if c.startswith("vs ")]
+
+    def _pct_color(val):
+        if not isinstance(val, str) or val == "—":
+            return ""
+        try:
+            num = float(val.replace("%", "").replace("+", ""))
+            if num > 0:
+                return "color: #2e7d32"
+            if num < 0:
+                return "color: #8b2942"
+        except ValueError:
+            pass
+        return "color: #111"
+
+    def _row_style(row_idx):
+        if row_idx >= len(row_styles):
+            return [""] * len(summary_df.columns)
+        kind = row_styles[row_idx]["kind"]
+        styles = [""] * len(summary_df.columns)
+        if kind == "asean_total":
+            styles[1] = "font-weight: 700; border: 2px solid #2e5c3e"
+            styles[2] = "font-weight: 700; border: 2px solid #2e5c3e"
+        elif kind == "g7_total":
+            styles[1] = "font-weight: 700; border: 2px solid #8b2942"
+            styles[2] = "font-weight: 700; border: 2px solid #8b2942"
+        elif kind == "grand_total":
+            styles = ["font-weight: 700"] * len(summary_df.columns)
+        elif kind == "group_child":
+            styles[1] = "padding-left: 1.25em"
+        return styles
+
+    styler = summary_df.style
+    for col in pct_cols:
+        styler = styler.map(_pct_color, subset=[col])
+    styler = styler.apply(lambda row: _row_style(row.name), axis=1)
+    styler = styler.set_table_styles([
+        {"selector": "th", "props": [
+            ("background-color", "#B9A779"),
+            ("color", "white"),
+            ("font-weight", "700"),
+            ("text-align", "center"),
+        ]},
+        {"selector": "td", "props": [("text-align", "right")]},
+        {"selector": "td.col0", "props": [("text-align", "left")]},
+        {"selector": "td.col1", "props": [("text-align", "left")]},
+    ], overwrite=False)
+    styler = styler.hide(axis="index")
+    return styler
 
 
 def process_raw(df):
@@ -317,7 +593,7 @@ def get_holiday_data(raw_arrivals_df, raw_departures_df, daily_in, daily_out, ho
 
 # ==================== MAIN APP ====================
 st.title("IBOB Traffic Trends")
-st.caption("Inbound | Outbound | Holiday Analysis | Data Analytics")
+st.caption("Inbound | Outbound | International Visitors | Holiday Analysis | Data Analytics")
 
 col1, _ = st.columns([1,5])
 with col1:
@@ -399,6 +675,54 @@ months_h = ['Jan&Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec
 rec_df = pd.DataFrame(rec_rows, columns=['Recovery Rate vs 2018']+months_h+['FY'])
 st.dataframe(rec_df, use_container_width=True, hide_index=True)
 st.caption("Source: Transportation Dept; Tourism Board; Immigration Dept.")
+
+# ===== INTERNATIONAL VISITORS (PPT SUMMARY) =====
+st.markdown("---")
+st.subheader("🌏 International Visitor Arrivals — PPT Summary")
+
+intl_df, intl_fetch_time = fetch_international_data()
+if intl_df is not None:
+    st.caption(f"📅 {intl_fetch_time} | Rows: {len(intl_df)}")
+
+    intl_years = sorted(pd.to_numeric(intl_df['year'], errors='coerce').dropna().unique().astype(int))
+    icol1, icol2 = st.columns(2)
+    with icol1:
+        ppt_year = st.selectbox("Summary year", intl_years, index=len(intl_years) - 1, key="ppt_year")
+    with icol2:
+        prior_options = [y for y in intl_years if y < ppt_year]
+        ppt_compare = st.selectbox(
+            "Compare vs",
+            prior_options if prior_options else ["—"],
+            index=len(prior_options) - 1 if prior_options else 0,
+            key="ppt_compare",
+            disabled=not prior_options,
+        )
+
+    compare_year = int(ppt_compare) if prior_options else None
+    summary_df, row_styles, meta = build_ppt_summary(intl_df, target_year=int(ppt_year), compare_year=compare_year)
+
+    if summary_df is not None:
+        month_note = f"{len(meta['months'])} months" if len(meta['months']) < 12 else "full year"
+        st.markdown(
+            f"**TABLE 2: PPT Summary** — {meta['period_label']} ({month_note})"
+        )
+        st.dataframe(style_ppt_summary(summary_df, row_styles), use_container_width=True, hide_index=True)
+        st.caption(
+            "Source: HKTB PartnerNet (COR Arrivals). "
+            "¹ ASEAN Others = Malaysia + Vietnam. "
+            "² G7 Others = Canada, France, Germany, Netherlands. "
+            "⁴ Remaining markets (e.g. India, Russia). "
+            "vs 2018 uses full-year 2018 baselines from Macro workbook."
+        )
+    else:
+        st.info("Not enough data to build the PPT summary for the selected year.")
+else:
+    st.info(
+        "International visitor data not yet available. "
+        "Run `international_visitors_scraper.py --output-csv data/international_visitors.csv` "
+        "or wait for the monthly GitHub Actions job."
+    )
+    st.caption(f"⚠️ {intl_fetch_time}")
 
 # ===== OUTBOUND =====
 st.markdown("---")
