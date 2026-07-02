@@ -1,12 +1,16 @@
-name: Fetch IMMD Data Weekly
+name: Fetch Data
 
 on:
   schedule:
-    - cron: '0 2 * * 1'  # Every Monday at 2am UTC (10am HKT)
-  workflow_dispatch:  # Allow manual trigger
+    - cron: '0 2 * * 1'   # Every Monday 2am UTC (10am HKT) — IMMD weekly
+    - cron: '0 3 1 * *'   # 1st of every month 3am UTC — PartnerNet monthly
+  workflow_dispatch:       # Manual trigger from GitHub Actions tab
 
 jobs:
-  fetch:
+  # ─────────────────────────────────────────────────
+  # Job 1: IMMD daily passenger traffic (existing)
+  # ─────────────────────────────────────────────────
+  fetch_immd:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,10 +26,46 @@ jobs:
       - name: Fetch IMMD CSV
         run: python scraper.py
 
-      - name: Commit updated data
+      - name: Commit updated IMMD data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/
           git diff --cached --quiet || git commit -m "Auto-update: IMMD data $(date +'%Y-%m-%d')"
+          git push
+
+  # ─────────────────────────────────────────────────
+  # Job 2: PartnerNet international visitor arrivals
+  # Runs monthly — writes data/international_visitors.csv
+  # ─────────────────────────────────────────────────
+  fetch_partnernet:
+    runs-on: ubuntu-latest
+    # Only run on the monthly schedule or manual trigger, not weekly
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3 1 * *'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright openpyxl
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Fetch PartnerNet visitor data
+        env:
+          PARTNERNET_USER: ${{ secrets.PARTNERNET_USER }}
+          PARTNERNET_PASS: ${{ secrets.PARTNERNET_PASS }}
+        run: python international_visitors_scraper.py --output-csv data/international_visitors.csv
+
+      - name: Commit updated visitor data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/international_visitors.csv
+          git diff --cached --quiet || git commit -m "Auto-update: PartnerNet visitor data $(date +'%Y-%m-%d')"
           git push
