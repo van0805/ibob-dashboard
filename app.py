@@ -26,18 +26,9 @@ GITHUB_REPO = "ibob-dashboard"
 GITHUB_CSV_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/data/daily_passenger_traffic.csv"
 GITHUB_INTL_CSV_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/data/international_visitors.csv"
 LOCAL_INTL_CSV = Path(__file__).resolve().parent / "data" / "international_visitors.csv"
+LOCAL_INTL_BASELINE_2018 = Path(__file__).resolve().parent / "data" / "international_visitors_baseline_2018.csv"
 GOV_DATA_URL = "https://www.immd.gov.hk/opendata/eng/transport/immigration_clearance/statistics_on_daily_passenger_traffic.csv"
-
-# 2018 full-year COR arrivals (thousands) — sync with Macro Update_IBOB Master
-INTL_VISITOR_2018_K = {
-    "Taiwan": 5472, "South Korea": 2300, "Macau SAR": 1800,
-    "Philippines": 1200, "Thailand": 700, "Indonesia": 580, "Singapore": 700,
-    "Malaysia": 2200, "Vietnam": 1955,
-    "USA": 2100, "Japan": 2000, "United Kingdom": 900,
-    "Canada": 700, "France": 500, "Germany": 550, "Netherlands": 333,
-    "Australia": 1300, "Middle East": 1100,
-    "India": 2500, "Russia": 1703,
-}
+BASELINE_YEAR = 2018
 
 INTL_MARKETS = [
     "Australia", "Canada", "France", "Germany", "India", "Indonesia",
@@ -184,30 +175,62 @@ def fetch_data():
 
 
 @st.cache_data(ttl=CACHE_TTL)
+def _parse_international_csv(csv_text, source_label):
+    """Parse and validate international visitor CSV (cached only on success)."""
+    df = pd.read_csv(StringIO(csv_text), encoding='utf-8-sig')
+    df.columns = df.columns.str.strip()
+    if df.empty or 'year' not in df.columns:
+        return None, None
+    df = _merge_intl_baseline(df)
+    hkt = datetime.now(timezone(timedelta(hours=8)))
+    return df, f"{hkt.strftime('%Y-%m-%d %H:%M')} HKT ({source_label})"
+
+
+def _merge_intl_baseline(df):
+    """Attach committed 2018 baseline rows from Book(Auto-update).csv."""
+    if LOCAL_INTL_BASELINE_2018.exists():
+        baseline = pd.read_csv(LOCAL_INTL_BASELINE_2018, encoding='utf-8-sig')
+        baseline.columns = baseline.columns.str.strip()
+        df = df.copy()
+        df['year'] = pd.to_numeric(df['year'], errors='coerce')
+        df = df[df['year'] != BASELINE_YEAR]
+        df = pd.concat([baseline, df], ignore_index=True)
+    df.columns = df.columns.str.strip()
+    return df.sort_values(['year', 'month']).reset_index(drop=True)
+
+
 def fetch_international_data():
     """Fetch international visitor CSV from GitHub cache, then local file."""
-    for label, url in [("GitHub cache", GITHUB_INTL_CSV_URL)]:
+    errors = []
+    for label, source, is_url in (
+        ("GitHub cache", GITHUB_INTL_CSV_URL, True),
+        ("local file", LOCAL_INTL_CSV, False),
+    ):
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-            r = requests.get(url, headers=headers, timeout=60, verify=False)
-            if r.status_code == 200 and len(r.text) > 100:
-                df = pd.read_csv(StringIO(r.text), encoding='utf-8-sig')
-                if not df.empty and 'year' in df.columns:
-                    hkt = datetime.now(timezone(timedelta(hours=8)))
-                    return df, f"{hkt.strftime('%Y-%m-%d %H:%M')} HKT ({label})"
-        except Exception:
-            continue
+            if is_url:
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                r = requests.get(source, headers=headers, timeout=60, verify=False)
+                if r.status_code != 200:
+                    errors.append(f"{label}: HTTP {r.status_code}")
+                    continue
+                if len(r.text) <= 100:
+                    errors.append(f"{label}: empty response")
+                    continue
+                csv_text = r.text
+            else:
+                if not source.exists():
+                    errors.append(f"{label}: file not found")
+                    continue
+                csv_text = source.read_text(encoding='utf-8-sig')
+            df, fetch_time = _parse_international_csv(csv_text, label)
+            if df is not None:
+                return df, fetch_time
+            errors.append(f"{label}: invalid CSV")
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
 
-    if LOCAL_INTL_CSV.exists():
-        try:
-            df = pd.read_csv(LOCAL_INTL_CSV, encoding='utf-8-sig')
-            if not df.empty:
-                hkt = datetime.now(timezone(timedelta(hours=8)))
-                return df, f"{hkt.strftime('%Y-%m-%d %H:%M')} HKT (local file)"
-        except Exception:
-            pass
-
-    return None, "No international visitor data available"
+    detail = "; ".join(errors) if errors else "no sources tried"
+    return None, f"No international visitor data available ({detail})"
 
 
 def _intl_year_totals(df, year, months=None):
@@ -235,14 +258,16 @@ def _intl_others4_total(market_totals):
     return sum(v for m, v in market_totals.items() if m not in _PPT_LISTED_MARKETS)
 
 
-def _intl_baseline_2018(markets):
+def _intl_baseline_2018(df, markets):
+    """Full-year 2018 baseline in thousands, from merged international_visitors.csv."""
+    totals = _intl_year_totals(df, BASELINE_YEAR, months=list(range(1, 13)))
+    if not totals:
+        return None
     if markets == "others4":
-        listed = sum(INTL_VISITOR_2018_K.get(m, 0) for m in _PPT_LISTED_MARKETS)
-        total = sum(INTL_VISITOR_2018_K.values())
-        return max(total - listed, 0)
+        return _intl_others4_total(totals) / 1000
     if isinstance(markets, list):
-        return sum(INTL_VISITOR_2018_K.get(m, 0) for m in markets)
-    return 0
+        return _intl_row_total(totals, markets) / 1000
+    return None
 
 
 def _pct_change(current_k, baseline_k):
@@ -288,6 +313,9 @@ def build_ppt_summary(df, target_year=None, compare_year=None):
     if not target_months:
         return None, None, None
 
+    period_label = f"Jan–{_month_abbr(target_months[-1])} {target_year}" if len(target_months) < 12 else f"Jan–Dec {target_year}"
+    prior_label = f"vs {compare_year}" if compare_year else "vs prior year"
+
     curr_totals = _intl_year_totals(df, target_year, target_months)
     prev_totals = _intl_year_totals(df, compare_year, target_months) if compare_year else {}
 
@@ -301,13 +329,13 @@ def build_ppt_summary(df, target_year=None, compare_year=None):
         elif spec == "others4":
             curr_k = _intl_others4_total(curr_totals) / 1000
             prev_k = _intl_others4_total(prev_totals) / 1000 if prev_totals else None
-            base_k = _intl_baseline_2018("others4")
+            base_k = _intl_baseline_2018(df, "others4")
             rows.append({
                 "Category": category,
                 "Market": label,
-                "YTD": _fmt_count_k(curr_k),
-                "vs_prior": _fmt_pct(_pct_change(curr_k, prev_k)),
-                "vs_2018": _fmt_pct(_pct_change(curr_k, base_k)),
+                period_label: _fmt_count_k(curr_k),
+                prior_label: _fmt_pct(_pct_change(curr_k, prev_k)),
+                "vs 2018": _fmt_pct(_pct_change(curr_k, base_k)),
             })
             row_styles.append({"kind": "others"})
             continue
@@ -318,14 +346,14 @@ def build_ppt_summary(df, target_year=None, compare_year=None):
 
         curr_k = _intl_row_total(curr_totals, markets) / 1000
         prev_k = _intl_row_total(prev_totals, markets) / 1000 if prev_totals else None
-        base_k = _intl_baseline_2018(markets)
+        base_k = _intl_baseline_2018(df, markets)
 
         rows.append({
             "Category": category,
             "Market": label,
-            "YTD": _fmt_count_k(curr_k),
-            "vs_prior": _fmt_pct(_pct_change(curr_k, prev_k)),
-            "vs_2018": _fmt_pct(_pct_change(curr_k, base_k)),
+            period_label: _fmt_count_k(curr_k),
+            prior_label: _fmt_pct(_pct_change(curr_k, prev_k)),
+            "vs 2018": _fmt_pct(_pct_change(curr_k, base_k)),
         })
 
         if spec == "asean_total":
@@ -339,8 +367,6 @@ def build_ppt_summary(df, target_year=None, compare_year=None):
         else:
             row_styles.append({"kind": "default"})
 
-    period_label = f"Jan–{_month_abbr(target_months[-1])} {target_year}" if len(target_months) < 12 else f"Jan–Dec {target_year}"
-    prior_label = f"vs {compare_year}" if compare_year else "vs prior year"
     columns = ["Category", "Market", period_label, prior_label, "vs 2018"]
     summary_df = pd.DataFrame(rows, columns=columns)
     return summary_df, row_styles, {
@@ -676,9 +702,9 @@ rec_df = pd.DataFrame(rec_rows, columns=['Recovery Rate vs 2018']+months_h+['FY'
 st.dataframe(rec_df, use_container_width=True, hide_index=True)
 st.caption("Source: Transportation Dept; Tourism Board; Immigration Dept.")
 
-# ===== INTERNATIONAL VISITORS (PPT SUMMARY) =====
+# ===== INTERNATIONAL VISITORS =====
 st.markdown("---")
-st.subheader("🌏 International Visitor Arrivals — PPT Summary")
+st.subheader("🌏 International Visitor Arrivals")
 
 intl_df, intl_fetch_time = fetch_international_data()
 if intl_df is not None:
@@ -704,7 +730,7 @@ if intl_df is not None:
     if summary_df is not None:
         month_note = f"{len(meta['months'])} months" if len(meta['months']) < 12 else "full year"
         st.markdown(
-            f"**TABLE 2: PPT Summary** — {meta['period_label']} ({month_note})"
+            f"**Visitor Arrivals Summary** — {meta['period_label']} ({month_note})"
         )
         st.dataframe(style_ppt_summary(summary_df, row_styles), use_container_width=True, hide_index=True)
         st.caption(
@@ -712,14 +738,15 @@ if intl_df is not None:
             "¹ ASEAN Others = Malaysia + Vietnam. "
             "² G7 Others = Canada, France, Germany, Netherlands. "
             "⁴ Remaining markets (e.g. India, Russia). "
-            "vs 2018 uses full-year 2018 baselines from Macro workbook."
+            "vs 2018 uses full-year 2018 baselines from Book(Auto-update).csv "
+            "(stored in data/international_visitors_baseline_2018.csv)."
         )
     else:
-        st.info("Not enough data to build the PPT summary for the selected year.")
+        st.info("Not enough data to build the summary for the selected year.")
 else:
     st.info(
         "International visitor data not yet available. "
-        "Run `international_visitors_scraper.py --output-csv data/international_visitors.csv` "
+        "Click **Refresh Data** above if the CSV was recently updated, "
         "or wait for the monthly GitHub Actions job."
     )
     st.caption(f"⚠️ {intl_fetch_time}")
