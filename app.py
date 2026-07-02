@@ -700,7 +700,8 @@ if intl_df is not None:
     with icol1:
         ppt_year = st.selectbox("Summary year", intl_years, index=len(intl_years) - 1, key="ppt_year")
     with icol2:
-        prior_options = [y for y in intl_years if y < ppt_year]
+        # 2018 is always shown as a fixed baseline column, not a compare filter option.
+        prior_options = [y for y in intl_years if y < ppt_year and y != BASELINE_YEAR]
         ppt_compare = st.selectbox(
             "Compare vs",
             prior_options if prior_options else ["—"],
