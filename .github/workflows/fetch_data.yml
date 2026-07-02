@@ -89,8 +89,17 @@ jobs:
         run: |
           YEAR=$(date +%Y)
           PRIOR=$((YEAR - 1))
-          python international_visitors_scraper.py --year $PRIOR --output-csv data/international_visitors.csv
-          python international_visitors_scraper.py --year $YEAR --output-csv data/international_visitors.csv
+          OUT=data/international_visitors.csv
+
+          # 1) Backfill 2024 first, then validate before continuing
+          python international_visitors_scraper.py --year 2024 --output-csv "$OUT"
+          python validate_intl_csv.py "$OUT" --year 2024
+
+          # 2) Refresh prior + current year
+          python international_visitors_scraper.py --year $PRIOR --output-csv "$OUT"
+          python international_visitors_scraper.py --year $YEAR --output-csv "$OUT"
+          python validate_intl_csv.py "$OUT" --year $PRIOR
+          python validate_intl_csv.py "$OUT" --year $YEAR --min-months 1
 
       - name: Commit updated visitor data
         run: |
