@@ -6,6 +6,13 @@ on:
     - cron: '0 3 1 * *'   # 1st of every month 3am UTC — PartnerNet monthly
   workflow_dispatch:       # Manual trigger from GitHub Actions tab
 
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-data-push-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # ─────────────────────────────────────────────────
   # Job 1: IMMD daily passenger traffic (existing)
@@ -31,8 +38,20 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/
-          git diff --cached --quiet || git commit -m "Auto-update: IMMD data $(date +'%Y-%m-%d')"
-          git push
+          if git diff --cached --quiet; then
+            echo "No IMMD changes to commit"
+            exit 0
+          fi
+          git commit -m "Auto-update: IMMD data $(date +'%Y-%m-%d')"
+          BRANCH="${GITHUB_REF_NAME:-main}"
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin "$BRANCH"
+            git push origin "HEAD:$BRANCH" && exit 0
+            echo "Push failed, retrying in ${attempt}0s..."
+            sleep $((attempt * 10))
+          done
+          echo "Push failed after retries"
+          exit 1
 
   # ─────────────────────────────────────────────────
   # Job 2: PartnerNet international visitor arrivals
@@ -40,10 +59,17 @@ jobs:
   # ─────────────────────────────────────────────────
   fetch_partnernet:
     runs-on: ubuntu-latest
+    needs: fetch_immd
     # Only run on the monthly schedule or manual trigger, not weekly
     if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3 1 * *'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Sync latest main
+        run: git pull origin main
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -71,5 +97,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -f data/international_visitors.csv
-          git diff --cached --quiet || git commit -m "Auto-update: PartnerNet visitor data $(date +'%Y-%m-%d')"
-          git push
+          if git diff --cached --quiet; then
+            echo "No visitor data changes to commit"
+            exit 0
+          fi
+          git commit -m "Auto-update: PartnerNet visitor data $(date +'%Y-%m-%d')"
+          BRANCH="${GITHUB_REF_NAME:-main}"
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin "$BRANCH"
+            git push origin "HEAD:$BRANCH" && exit 0
+            echo "Push failed, retrying in ${attempt}0s..."
+            sleep $((attempt * 10))
+          done
+          echo "Push failed after retries"
+          exit 1
