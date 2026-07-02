@@ -291,8 +291,11 @@ def build_ppt_summary(df, target_year=None, compare_year=None):
     if target_year is None:
         target_year = int(available_years[-1])
     if compare_year is None:
-        prior = [y for y in available_years if y < target_year]
+        # Keep 2018 as fixed baseline only; do not auto-use it as YoY compare.
+        prior = [y for y in available_years if y < target_year and y != BASELINE_YEAR]
         compare_year = int(prior[-1]) if prior else None
+    elif compare_year == BASELINE_YEAR:
+        compare_year = None
 
     target_months = sorted(df.loc[df['year'] == target_year, 'month'].dropna().unique())
     if not target_months:
