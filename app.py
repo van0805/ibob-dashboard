@@ -283,6 +283,7 @@ def _parse_international_csv(csv_text, source_label):
     return df, f"{hkt.strftime('%Y-%m-%d %H:%M')} HKT ({source_label})"
 
 
+@st.cache_data(ttl=CACHE_TTL)
 def fetch_international_data():
     """Fetch international visitor CSV from GitHub cache, then local file."""
     errors = []
