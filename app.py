@@ -817,91 +817,6 @@ def get_series(monthly, year, include_jf=True):
     return result
 
 
-def get_ytd_avg(monthly, year, through_month):
-    """Get YTD daily average: total from Jan through through_month / days in those months."""
-    if monthly is None:
-        return None
-    mask = (monthly["Year"] == year) & (monthly["Month"] >= 1) & (monthly["Month"] <= through_month)
-    yd = monthly[mask]
-    if yd.empty:
-        return None
-    total = yd["total"].sum()
-    days = yd["days"].sum()
-    return total / days if days > 0 else None
-
-
-def make_ytd_table_figure(table_rows, table_header, title="YTD Daily Average", is_yoy=False):
-    """Create a standalone Plotly figure with a YTD summary table (no chart)."""
-    fig = go.Figure()
-
-    columns = list(zip(*table_rows))
-    n_cols = len(columns)
-    n_rows = len(table_rows)
-
-    # Row fills: gray for Overall, white for sub-rows
-    row_fills = []
-    for i in range(n_rows):
-        label = str(table_rows[i][0]).lower()
-        if "overall" in label:
-            row_fills.append("#f0f0f0")
-        else:
-            row_fills.append("#ffffff")
-    fill_colors = [[row_fills[i] for i in range(n_rows)] for _ in range(n_cols)]
-
-    # Font colors for YoY values
-    font_colors = []
-    for col_idx, col in enumerate(columns):
-        if col_idx == 0:
-            font_colors.append(['#111'] * len(col))
-        else:
-            col_colors = []
-            for val in col:
-                if is_yoy and isinstance(val, str) and val != '—':
-                    try:
-                        num = float(val.replace('%', '').replace('+', ''))
-                        if num > 0:
-                            col_colors.append('#2e7d32')
-                        elif num < 0:
-                            col_colors.append('#8b2942')
-                        else:
-                            col_colors.append('#111')
-                    except ValueError:
-                        col_colors.append('#111')
-                else:
-                    col_colors.append('#111')
-            font_colors.append(col_colors)
-
-    columnwidth = [16] + [13] * (n_cols - 1)
-
-    fig.add_trace(go.Table(
-        header=dict(
-            values=table_header,
-            fill=dict(color="#B9A779"),
-            font=dict(color="white", size=12, family="Arial"),
-            align="center",
-            line=dict(color="#d4d4d4", width=1)
-        ),
-        cells=dict(
-            values=columns,
-            font=dict(color=font_colors, size=11, family="Arial"),
-            fill=dict(color=fill_colors),
-            align=["left"] + ["center"] * (n_cols - 1),
-            line=dict(color="#d4d4d4", width=1),
-            height=25
-        ),
-        columnwidth=columnwidth
-    ))
-
-    fig.update_layout(
-        title=dict(text=title, font=dict(size=13)),
-        margin=dict(l=2, r=2, t=40, b=20),
-        height=180 + 25 * n_rows,
-        template="plotly_white"
-    )
-
-    return fig
-
-
 def make_chart(title, series_dict, y_min=0, y_max=None):
     months = ['Jan&Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
     fig = go.Figure()
@@ -1935,32 +1850,6 @@ for m in range(today_hkt.month, 0, -1):
 if ytd_through_month is None:
     ytd_through_month = max(today_hkt.month - 1, 1)
 month_abbrs = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-ytd_label = f"YTD (Jan–{month_abbrs[ytd_through_month - 1]})"
-
-def _ytd_growth(monthly, yr, prev_yr, through):
-    cur = get_ytd_avg(monthly, yr, through)
-    prv = get_ytd_avg(monthly, prev_yr, through)
-    if cur and prv and prv > 0:
-        return f"{(cur - prv) / prv:+.0%}"
-    return "—"
-
-# YTD rows for inbound
-ytd_in_rows = []
-ytd_in_rows.append(["<b>Overall</b>"] + [
-    _ytd_growth(monthly_in, yr, yr-1, ytd_through_month)
-    for yr in DISPLAY_YEARS
-])
-ytd_in_rows.append(["  Mainland"] + [
-    _ytd_growth(monthly_mainland, yr, yr-1, ytd_through_month)
-    for yr in DISPLAY_YEARS
-])
-ytd_in_rows.append(["  International"] + [
-    _ytd_growth(monthly_international, yr, yr-1, ytd_through_month)
-    for yr in DISPLAY_YEARS
-])
-
-ytd_in_header = [ytd_label] + [str(yr) for yr in DISPLAY_YEARS]
-
 st.plotly_chart(
     make_combined_figure(
         "Daily Tourist Arrivals by Month",
@@ -1970,21 +1859,19 @@ st.plotly_chart(
     use_container_width=True
 )
 
-# Tables summary — standalone full-width figure with all three tables stacked
+# Tables summary — standalone full-width figure with both tables stacked
 st.plotly_chart(
     make_combined_figure(
-        "Inbound YoY, Recovery & YTD Summary",
+        "Inbound YoY & Recovery Summary",
         table1_rows=yoy_rows,
-        table1_header=['YoY Growth Rate'] + months_h + ['FY'],
+        table1_header=['YoY Growth Rate'] + months_h + ['FY*'],
         table2_rows=rec_rows,
-        table2_header=['Recovery Rate vs 2018'] + months_h + ['FY'],
-        table3_rows=ytd_in_rows,
-        table3_header=ytd_in_header,
-        table3_is_yoy=True,
+        table2_header=['Recovery Rate vs 2018'] + months_h + ['FY*'],
     ),
     use_container_width=True
 )
-st.caption("Source: Transportation Dept; Tourism Board; Immigration Dept.")
+st.caption(f"Source: Transportation Dept; Tourism Board; Immigration Dept. | * For 2026: FY = YTD (Jan–{month_abbrs[ytd_through_month - 1]}) — growth rates are period-matched, not full-year.")
+st.markdown(f"[Download source data]({GOV_DATA_URL})")
 
 
 def _build_intl_monthly_chart(df):
@@ -2120,13 +2007,6 @@ out_rec_rows = []
 for yr in DISPLAY_YEARS[-2:]:
     out_rec_rows.append([f'<b>{yr} vs 2018</b>'] + calc_recovery(monthly_out, OUTBOUND_2018, yr))
 
-# Outbound YTD rows
-ytd_out_rows = []
-ytd_out_rows.append(["<b>HK Residents</b>"] + [
-    _ytd_growth(monthly_out, yr, yr-1, ytd_through_month)
-    for yr in DISPLAY_YEARS
-])
-
 st.plotly_chart(
     make_combined_figure(
         "Daily HK Resident Departures by Month",
@@ -2136,22 +2016,20 @@ st.plotly_chart(
     use_container_width=True
 )
 
-# Tables summary — standalone full-width figure with all three tables stacked
+# Tables summary — standalone full-width figure with both tables stacked
 st.plotly_chart(
     make_combined_figure(
-        "Outbound YoY, Recovery & YTD Summary",
+        "Outbound YoY & Recovery Summary",
         table1_rows=gr_rows,
-        table1_header=['YoY Growth Rate'] + months_h + ['FY'],
+        table1_header=['YoY Growth Rate'] + months_h + ['FY*'],
         table2_rows=out_rec_rows,
-        table2_header=['Recovery Rate vs 2018'] + months_h + ['FY'],
-        table3_rows=ytd_out_rows,
-        table3_header=ytd_in_header,
-        table3_is_yoy=True,
+        table2_header=['Recovery Rate vs 2018'] + months_h + ['FY*'],
         extra_height=30,
     ),
     use_container_width=True
 )
-st.caption("Source: Immigration Department.")
+st.caption(f"Source: Immigration Department. | * For 2026: FY = YTD (Jan–{month_abbrs[ytd_through_month - 1]}) — growth rates are period-matched, not full-year.")
+st.markdown(f"[Download source data]({GOV_DATA_URL})")
 
 # ===== HOLIDAY ANALYSIS =====
 st.markdown("---")
