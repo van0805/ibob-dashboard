@@ -121,6 +121,13 @@ HOLIDAYS_BY_REGION = {
 }
 _CNY_FIRST_DAY = {2024: '2024-02-10', 2025: '2025-01-29', 2026: '2026-02-17'}
 CP_TYPE_LABELS = {'rail': 'Rail', 'car': 'Car / Land', 'air': 'Air', 'other': 'Other'}
+HOLIDAY_MARGIN_OVERVIEW = dict(l=50, r=20, t=100, b=65)
+HOLIDAY_MARGIN_PANEL = dict(l=50, r=20, t=75, b=60)
+HOLIDAY_MARGIN_BAR = dict(l=20, r=20, t=85, b=60)
+HOLIDAY_MARGIN_CP = dict(l=60, r=110, t=75, b=60)
+HOLIDAY_MARGIN_TABLE = dict(l=20, r=20, t=80, b=40)
+HOLIDAY_INBOUND_SEGMENTS = ('All tourists', 'Mainland', 'International')
+HOLIDAY_OUTBOUND_SEGMENTS = ('All', 'HK Residents', 'Tourists')
 
 HOLIDAY_PERIODS = {
     "CN": {
@@ -754,16 +761,208 @@ def process_raw(df):
     daily_in['Year'] = daily_in['Date'].dt.year
     daily_in['Month'] = daily_in['Date'].dt.month
 
-    # Daily outbound — absolute total departures plus HK-resident series for trend charts
+    # Daily outbound — absolute total departures plus residency breakdown for trend charts
+    departures['tourist_total'] = departures['Mainland Visitors'] + departures['Other Visitors']
     daily_out = departures.groupby('Date', as_index=False).agg(
         total_departure=('Total', 'sum'),
         hk_departure=('Hong Kong Residents', 'sum'),
+        tourist_departure=('tourist_total', 'sum'),
+        mainland_departure=('Mainland Visitors', 'sum'),
+        international_departure=('Other Visitors', 'sum'),
     )
     daily_out['Year'] = daily_out['Date'].dt.year
     daily_out['Month'] = daily_out['Date'].dt.month
 
     # Keep arrivals with CP detail for holiday analysis
     return daily_in, daily_out, arrivals, departures
+
+
+def _holiday_segment_config(direction, segment):
+    """Map holiday traveller segment to daily column, CP columns, and chart label."""
+    if direction == 'inbound':
+        configs = {
+            'All tourists': ('tourist_arrival', ['Mainland Visitors', 'Other Visitors'], 'Tourist Arrivals'),
+            'Mainland': ('mainland_arrival', ['Mainland Visitors'], 'Mainland Visitor Arrivals'),
+            'International': ('international_arrival', ['Other Visitors'], 'International Visitor Arrivals'),
+        }
+        return configs.get(segment, configs['All tourists'])
+    configs = {
+        'All': ('total_departure', None, 'Total Departures'),
+        'HK Residents': ('hk_departure', ['Hong Kong Residents'], 'HK Resident Departures'),
+        'Tourists': ('tourist_departure', ['Mainland Visitors', 'Other Visitors'], 'Visitor Departures'),
+    }
+    return configs.get(segment, configs['HK Residents'])
+
+
+def _growth_pct_color(val):
+    """Green/red font for YoY percentage strings."""
+    if not isinstance(val, str) or val == '—':
+        return '#111111'
+    if val.startswith('+'):
+        return '#2e7d32'
+    if val.startswith('-'):
+        return '#8b2942'
+    return '#111111'
+
+
+def _yoy_display(newer_val, older_val):
+    """Return YoY percentage string from older year to newer year."""
+    if older_val and older_val > 0 and newer_val is not None:
+        pct = (newer_val - older_val) / older_val
+        return f"+{pct:.0%}" if pct >= 0 else f"{pct:.0%}"
+    return "—"
+
+
+def _cp_table_column_spec(cp_years):
+    """Column order: newest year first, YoY between each consecutive pair."""
+    years_desc = sorted(cp_years, key=lambda y: int(y), reverse=True)
+    spec = [('Control Point', 'label', None, None)]
+    for i, yr in enumerate(years_desc):
+        yr_str = str(yr)
+        spec.append((yr_str, 'year', yr_str, None))
+        if i < len(years_desc) - 1:
+            older = str(years_desc[i + 1])
+            spec.append((
+                f"YoY {yr_str[-2:]}→{older[-2:]}",
+                'yoy',
+                yr_str,
+                older,
+            ))
+    return spec, years_desc
+
+
+def _add_cp_line_endpoint_labels(fig, endpoints, y_max):
+    """Place line-end labels with arrows; stagger and link all labels when endpoints overlap."""
+    if not endpoints:
+        return
+
+    y_span = max(y_max or 0, max(e['y'] for e in endpoints), 1)
+    y_tolerance = max(y_span * 0.02, 3000)
+    y_step = max(y_span * 0.07, 6000)
+    x_label_offset = 0.38
+
+    groups = []
+    for endpoint in endpoints:
+        placed = False
+        for group in groups:
+            anchor = group[0]
+            if (
+                endpoint['x'] == anchor['x']
+                and abs(endpoint['y'] - anchor['y']) <= y_tolerance
+            ):
+                group.append(endpoint)
+                placed = True
+                break
+        if not placed:
+            groups.append([endpoint])
+
+    for group in groups:
+        group.sort(key=lambda e: e['y'], reverse=True)
+        if len(group) == 1:
+            lbl = group[0]
+            fig.add_annotation(
+                x=lbl['x'], y=lbl['y'],
+                ax=lbl['x'] + x_label_offset, ay=lbl['y'],
+                xref='x', yref='y', axref='x', ayref='y',
+                text=lbl['text'],
+                showarrow=True,
+                arrowhead=2,
+                arrowsize=1,
+                arrowwidth=1.2,
+                arrowcolor=lbl['color'],
+                font=dict(size=12, color=lbl['color']),
+                bgcolor='rgba(255,255,255,0.85)',
+                borderpad=3,
+                xanchor='left',
+            )
+            continue
+
+        n = len(group)
+        anchor_x = group[0]['x']
+        anchor_y = sum(e['y'] for e in group) / n
+        for i, lbl in enumerate(group):
+            label_y = anchor_y + (i - (n - 1) / 2) * y_step
+            fig.add_annotation(
+                x=lbl['x'], y=lbl['y'],
+                ax=anchor_x + x_label_offset, ay=label_y,
+                xref='x', yref='y', axref='x', ayref='y',
+                text=lbl['text'],
+                showarrow=True,
+                arrowhead=2,
+                arrowsize=1,
+                arrowwidth=1.2,
+                arrowcolor=lbl['color'],
+                font=dict(size=11, color=lbl['color']),
+                bgcolor='rgba(255,255,255,0.85)',
+                borderpad=2,
+                xanchor='left',
+            )
+
+
+def _render_cp_holiday_table(cp_rows_data, cp_years, flow_label, selected_holiday, variant, chart_key):
+    """Render sortable control-point table (Excel-style header click to sort)."""
+    spec, years_desc = _cp_table_column_spec(cp_years)
+    col_names = [name for name, *_ in spec]
+
+    records = []
+    for item in cp_rows_data:
+        year_map = {}
+        for yr, val in zip(cp_years, item['year_vals']):
+            year_map[str(yr)] = val
+        record = {'Control Point': item['label']}
+        for col_name, kind, y_new, y_old in spec[1:]:
+            if kind == 'year':
+                record[col_name] = year_map.get(y_new)
+            else:
+                record[col_name] = _yoy_display(year_map.get(y_new), year_map.get(y_old))
+        records.append(record)
+
+    cp_df = pd.DataFrame(records, columns=col_names)
+    if years_desc:
+        latest_col = str(years_desc[0])
+        cp_df = cp_df.sort_values(latest_col, ascending=False, na_position='last').reset_index(drop=True)
+
+    yoy_cols = [c for c in col_names if c.startswith('YoY')]
+
+    def _style_yoy_columns(col_series):
+        if col_series.name not in yoy_cols:
+            return [''] * len(col_series)
+        return [f'color: {_growth_pct_color(v)}' for v in col_series]
+
+    styled = cp_df.style.apply(_style_yoy_columns, axis=0)
+
+    col_config = {
+        'Control Point': st.column_config.TextColumn('Control Point', width='medium'),
+    }
+    for col_name, kind, *_ in spec[1:]:
+        if kind == 'year':
+            col_config[col_name] = st.column_config.NumberColumn(
+                col_name, format='%,d', width='small',
+            )
+        else:
+            col_config[col_name] = st.column_config.TextColumn(col_name, width='small')
+
+    n_rows = len(cp_df)
+    table_height = 38 + n_rows * 35 + 16
+
+    st.markdown(f"**Total {flow_label} by Control Point** — {selected_holiday} ({variant})")
+    st.dataframe(
+        styled,
+        column_config=col_config,
+        use_container_width=True,
+        hide_index=True,
+        height=table_height,
+        key=f"hol_cp_table_{chart_key}",
+    )
+
+
+def _cp_segment_values(cp_subset, cp_cols):
+    """Sum residency columns at control-point level for the selected segment."""
+    if cp_cols is None:
+        return cp_subset['Total']
+    if len(cp_cols) == 1:
+        return cp_subset[cp_cols[0]]
+    return cp_subset[cp_cols].sum(axis=1)
 
 
 def get_monthly(daily_df, value_col):
@@ -1197,13 +1396,14 @@ def make_multiyear_holiday_chart(daily_df, value_col, periods, title, colors):
         norm_start = pd.Timestamp(year=ref_year, month=h_start.month, day=h_start.day)
         norm_end = pd.Timestamp(year=ref_year, month=h_end.month, day=h_end.day)
         color = colors.get(str(year), '#3A7976')
+        n_days = (h_end - h_start).days + 1
         period_info.append((
             str(year), norm_start, norm_end, color,
-            h_start.strftime('%d %b'), h_end.strftime('%d %b'),
+            h_start.strftime('%d %b'), h_end.strftime('%d %b'), n_days,
         ))
 
     # Determine if all periods share the same normalized window
-    unique_windows = set((ns, ne) for _, ns, ne, _, _, _ in period_info)
+    unique_windows = set((ns, ne) for _, ns, ne, _, _, _, _ in period_info)
     single_window = len(unique_windows) == 1
 
     # --- Second pass: plot traces + vrects ---
@@ -1231,7 +1431,7 @@ def make_multiyear_holiday_chart(daily_df, value_col, periods, title, colors):
         plotted = True
 
     # --- Add vrects (no built-in annotations — we add staggered annotations below) ---
-    for yr, ns, ne, color, start_lbl, end_lbl in period_info:
+    for yr, ns, ne, color, start_lbl, end_lbl, _n_days in period_info:
         fig.add_vrect(
             x0=ns,
             x1=ne + pd.Timedelta(days=1),
@@ -1243,11 +1443,11 @@ def make_multiyear_holiday_chart(daily_df, value_col, periods, title, colors):
 
     # --- Staggered annotations to avoid overlap ---
     if single_window and period_info:
-        _, ns, ne, color, start_lbl, end_lbl = period_info[0]
+        _, ns, ne, color, start_lbl, end_lbl, n_days = period_info[0]
         mid = ns + (ne - ns) / 2
         fig.add_annotation(
             x=mid, yref='paper', y=1.02,
-            text=f"<b>{start_lbl} – {end_lbl}</b>",
+            text=f"<b>{start_lbl} – {end_lbl}</b> · {n_days}d",
             showarrow=False,
             font=dict(color=color, size=11),
             bgcolor='rgba(255,255,255,0.85)',
@@ -1257,11 +1457,11 @@ def make_multiyear_holiday_chart(daily_df, value_col, periods, title, colors):
     elif not single_window:
         n = len(period_info)
         y_positions = [1.02 - i * 0.06 for i in range(n)]
-        for i, (yr, ns, ne, color, start_lbl, end_lbl) in enumerate(period_info):
+        for i, (yr, ns, ne, color, start_lbl, end_lbl, n_days) in enumerate(period_info):
             mid = ns + (ne - ns) / 2
             fig.add_annotation(
                 x=mid, yref='paper', y=y_positions[i],
-                text=f"<b>{yr}</b>  {start_lbl} – {end_lbl}",
+                text=f"<b>{yr}</b>  {start_lbl} – {end_lbl} · {n_days}d",
                 showarrow=False,
                 font=dict(color=color, size=10),
                 bgcolor='rgba(255,255,255,0.85)',
@@ -1276,7 +1476,7 @@ def make_multiyear_holiday_chart(daily_df, value_col, periods, title, colors):
         title=dict(text=title, font=dict(size=15)),
         yaxis=dict(tickformat=','),
         xaxis=dict(dtick='M1', tickformat='%b', title=''),
-        margin=dict(l=50, r=20, t=65, b=40),
+        margin=HOLIDAY_MARGIN_OVERVIEW,
         height=520,
         template='plotly_white',
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
@@ -1284,25 +1484,24 @@ def make_multiyear_holiday_chart(daily_df, value_col, periods, title, colors):
     return fig
 
 
-def get_holiday_data(raw_arrivals_df, raw_departures_df, daily_in, daily_out, holiday_key, context='Mainland', variant='Extended Leave Days', al_fallback=False, direction=None):
-    """Compute holiday stats from absolute arrival/departure totals."""
+def get_holiday_data(raw_arrivals_df, raw_departures_df, daily_in, daily_out, holiday_key, context='Mainland', variant='Extended Leave Days', al_fallback=False, direction=None, segment=None):
+    """Compute holiday stats from arrival/departure totals for a traveller segment."""
     region = _resolve_region(context)
     if direction is None:
         direction = CONTEXT_DIRECTION.get(region, 'inbound')
+    if segment is None:
+        segment = HOLIDAY_INBOUND_SEGMENTS[0] if direction == 'inbound' else HOLIDAY_OUTBOUND_SEGMENTS[1]
+    value_col, cp_cols, flow_label = _holiday_segment_config(direction, segment)
     if direction == 'inbound':
         if raw_arrivals_df is None or daily_in is None:
             return None
         daily_df = daily_in
-        value_col = 'total_arrival'
         cp_df = raw_arrivals_df
-        cp_value_col = 'Total'
     else:
         if raw_departures_df is None or daily_out is None:
             return None
         daily_df = daily_out
-        value_col = 'total_departure'
         cp_df = raw_departures_df
-        cp_value_col = 'Total'
 
     if region == 'HK' and VARIANT_TO_KEY.get(variant, variant) == 'extended_al' and al_fallback:
         periods = build_hk_al_view_periods(holiday_key)
@@ -1310,7 +1509,10 @@ def get_holiday_data(raw_arrivals_df, raw_departures_df, daily_in, daily_out, ho
         periods = get_holiday_periods(region, holiday_key, variant, al_fallback=al_fallback)
     if not periods:
         return None
-    result = {'avg': {}, 'total': {}, 'days': {}, 'daily': {}, 'cp_data': {}, 'cp_total': {}, 'periods': periods}
+    result = {
+        'avg': {}, 'total': {}, 'days': {}, 'daily': {}, 'cp_data': {}, 'cp_total': {},
+        'periods': periods, 'flow_label': flow_label, 'value_col': value_col, 'segment': segment,
+    }
 
     if not pd.api.types.is_datetime64_any_dtype(cp_df['Date']):
         cp_df = cp_df.copy()
@@ -1336,10 +1538,11 @@ def get_holiday_data(raw_arrivals_df, raw_departures_df, daily_in, daily_out, ho
 
         # Control point breakdown
         cp_mask = (cp_df['Date'] >= start) & (cp_df['Date'] <= end)
-        cp_subset = cp_df[cp_mask]
-        cp_daily = cp_subset.groupby('Control Point')[cp_value_col].sum() / n_days
+        cp_subset = cp_df[cp_mask].copy()
+        cp_subset['_segment_val'] = _cp_segment_values(cp_subset, cp_cols)
+        cp_daily = cp_subset.groupby('Control Point')['_segment_val'].sum() / n_days
         result['cp_data'][str(year)] = cp_daily.to_dict()
-        cp_total = cp_subset.groupby('Control Point')[cp_value_col].sum()
+        cp_total = cp_subset.groupby('Control Point')['_segment_val'].sum()
         result['cp_total'][str(year)] = {k: int(v) for k, v in cp_total.to_dict().items()}
 
     # Compute growth rates
@@ -1411,15 +1614,16 @@ def get_holiday_data(raw_arrivals_df, raw_departures_df, daily_in, daily_out, ho
     return result
 
 
-def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_in, daily_out, colors, current_year, holiday_key=None, fy_year=None, direction=None):
+def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_in, daily_out, colors, current_year, holiday_key=None, fy_year=None, direction=None, segment=None):
     """Render full-year, dual histogram, daily trend, and checkpoint charts for one holiday variant."""
     if direction is None:
         direction = CONTEXT_DIRECTION.get(_resolve_region(context), 'inbound')
-    flow_label = 'Total Arrivals' if direction == 'inbound' else 'Total Departures'
+    flow_label = hd.get('flow_label') or ('Tourist Arrivals' if direction == 'inbound' else 'HK Resident Departures')
     daily_df = daily_in if direction == 'inbound' else daily_out
-    value_col = 'total_arrival' if direction == 'inbound' else 'total_departure'
+    value_col = hd.get('value_col') or ('tourist_arrival' if direction == 'inbound' else 'hk_departure')
     variant_slug = 'official' if variant == 'Official Days' else 'extended'
-    chart_key = f"{holiday_key or 'holiday'}_{variant_slug}"
+    segment_slug = (segment or hd.get('segment') or 'default').lower().replace(' ', '_')
+    chart_key = f"{holiday_key or 'holiday'}_{variant_slug}_{segment_slug}"
 
     if not hd or not hd.get('avg'):
         st.info("No data available for the selected holiday period.")
@@ -1440,93 +1644,94 @@ def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_
     )
     if fig_fy:
         st.plotly_chart(fig_fy, use_container_width=True, key=f"hol_fy_{chart_key}")
+        st.markdown("<div style='height: 20px'></div>", unsafe_allow_html=True)
 
-    # --- Daily trend (zoom-in of holiday period, all years overlaid) ---
+    # --- Daily trend + bar chart (side by side, half width each) ---
     years_avail = sorted(hd['avg'].keys())
-    st.markdown(f"**Daily {flow_label}** by day — {variant}")
-    fig_daily = go.Figure()
-    day_labels = hd.get('day_labels', [])
-    max_len = max((len(hd['daily'].get(yr, [])) for yr in years_avail), default=0)
-    if not day_labels and max_len:
-        day_labels = [f"Day {j + 1}" for j in range(max_len)]
-    x_idx = list(range(len(day_labels)))
+    col_daily, col_bar = st.columns(2)
 
-    for yr in years_avail:
-        data = hd['daily'].get(yr, [])
-        if data:
-            fig_daily.add_trace(go.Scatter(
-                x=x_idx[:len(data)], y=data, name=yr, mode='lines+markers',
-                line=dict(
-                    color=colors.get(yr, '#999'),
-                    width=3 if yr == years_avail[-1] else 2,
-                    dash='dash' if yr == years_avail[0] else 'solid',
-                    shape='spline',
-                ),
-                marker=dict(size=6),
-                hovertemplate=yr + ': <b>%{customdata}K</b><extra></extra>',
-                customdata=[int(round(v / 1000)) if v is not None else 0 for v in data],
-                connectgaps=False,
-            ))
-    for i in range(max_len):
-        fig_daily.add_vline(x=i, line_width=1, line_dash="dot", line_color="#e0e0e0")
-    fig_daily.update_layout(
-        xaxis=dict(tickmode='array', tickvals=x_idx, ticktext=day_labels),
-        yaxis=dict(tickformat=','), showlegend=True,
-        legend=dict(orientation='h', yanchor='bottom', y=1.02),
-        margin=dict(l=50, r=20, t=30, b=40), height=380, template='plotly_white',
-        yaxis_range=[0, None],
-    )
-    st.plotly_chart(fig_daily, use_container_width=True, key=f"hol_daily_{chart_key}")
+    with col_daily:
+        st.markdown(f"**Daily {flow_label}** by day — {variant}")
+        fig_daily = go.Figure()
+        day_labels = hd.get('day_labels', [])
+        max_len = max((len(hd['daily'].get(yr, [])) for yr in years_avail), default=0)
+        if not day_labels and max_len:
+            day_labels = [f"Day {j + 1}" for j in range(max_len)]
+        x_idx = list(range(len(day_labels)))
 
-    # --- Bar charts: Total Volume (left) + Avg. Daily (right) ---
-    years_avail = sorted(hd['avg'].keys())
-    bar_colors = [colors.get(yr, '#B9A779') if yr == str(current_year) else '#c8c8c8' for yr in years_avail]
-    bar_labels = [
-        f"{yr}<br>{hd['days'][yr]}d" + ("*" if _period_for_year(hd['periods'], yr).get('official_fallback') else "")
-        for yr in years_avail
-    ]
-
-    col_total, col_avg = st.columns(2)
-    with col_total:
-        st.markdown(f"**Total Volume** — {variant}")
-        total_vals = [hd['total'][yr] for yr in years_avail]
-        fig_tot = go.Figure(go.Bar(
-            x=bar_labels, y=total_vals, marker_color=bar_colors,
-            text=[format_volume_label(v) for v in total_vals],
-            textposition='outside',
-        ))
-        for i, g in enumerate(hd.get('total_growth', [])):
-            fig_tot.add_annotation(
-                x=(i + i + 1) / 2, y=(total_vals[i] + total_vals[i + 1]) / 2,
-                text=f"<b>{g}</b>", showarrow=False,
-                font=dict(size=12, color='#333'),
-                bgcolor='#fff', bordercolor='#555', borderwidth=1.5, borderpad=4,
-            )
-        fig_tot.update_layout(
-            yaxis=dict(visible=False), showlegend=False,
-            margin=dict(l=20, r=20, t=30, b=40), height=360, template='plotly_white',
+        for yr in years_avail:
+            data = hd['daily'].get(yr, [])
+            if data:
+                fig_daily.add_trace(go.Scatter(
+                    x=x_idx[:len(data)], y=data, name=yr, mode='lines+markers',
+                    line=dict(
+                        color=colors.get(yr, '#999'),
+                        width=3 if yr == years_avail[-1] else 2,
+                        dash='dash' if yr == years_avail[0] else 'solid',
+                        shape='spline',
+                    ),
+                    marker=dict(size=6),
+                    hovertemplate=yr + ': <b>%{customdata}K</b><extra></extra>',
+                    customdata=[int(round(v / 1000)) if v is not None else 0 for v in data],
+                    connectgaps=False,
+                ))
+        for i in range(max_len):
+            fig_daily.add_vline(x=i, line_width=1, line_dash="dot", line_color="#e0e0e0")
+        fig_daily.update_layout(
+            xaxis=dict(tickmode='array', tickvals=x_idx, ticktext=day_labels),
+            yaxis=dict(tickformat=','), showlegend=True,
+            legend=dict(orientation='h', yanchor='bottom', y=1.02),
+            margin=HOLIDAY_MARGIN_PANEL, height=380, template='plotly_white',
+            yaxis_range=[0, None],
         )
-        st.plotly_chart(fig_tot, use_container_width=True, key=f"hol_tot_{chart_key}")
+        st.plotly_chart(fig_daily, use_container_width=True, key=f"hol_daily_{chart_key}")
 
-    with col_avg:
-        st.markdown(f"**Avg. Daily {flow_label}** — {variant}")
-        bar_vals = [hd['avg'][yr] for yr in years_avail]
-        fig_avg = go.Figure(go.Bar(
+    with col_bar:
+        volume_basis = st.radio(
+            "Traffic volume basis",
+            ['Period total', 'Daily average'],
+            horizontal=True,
+            help=(
+                "Period total = cumulative traffic across the full holiday window. "
+                "Daily average = mean daily traffic over the same window."
+            ),
+            key=f"hol_vol_basis_{chart_key}",
+        )
+        bar_colors = [colors.get(yr, '#B9A779') if yr == str(current_year) else '#c8c8c8' for yr in years_avail]
+        bar_labels = [
+            f"{yr}<br>{hd['days'][yr]}d" + ("*" if _period_for_year(hd['periods'], yr).get('official_fallback') else "")
+            for yr in years_avail
+        ]
+
+        if volume_basis == 'Period total':
+            st.markdown(f"**Period Total {flow_label}** — {variant}")
+            bar_vals = [hd['total'][yr] for yr in years_avail]
+            growth_vals = hd.get('total_growth', [])
+            text_labels = [format_volume_label(v) for v in bar_vals]
+        else:
+            st.markdown(f"**Daily Average {flow_label}** — {variant}")
+            bar_vals = [hd['avg'][yr] for yr in years_avail]
+            growth_vals = hd.get('growth', [])
+            text_labels = [f"<b>{int(v/1000)}K</b>" for v in bar_vals]
+
+        fig_bar = go.Figure(go.Bar(
             x=bar_labels, y=bar_vals, marker_color=bar_colors,
-            text=[f"<b>{int(v/1000)}K</b>" for v in bar_vals], textposition='outside',
+            text=text_labels, textposition='outside',
         ))
-        for i, g in enumerate(hd.get('growth', [])):
-            fig_avg.add_annotation(
+        for i, g in enumerate(growth_vals):
+            fig_bar.add_annotation(
                 x=(i + i + 1) / 2, y=(bar_vals[i] + bar_vals[i + 1]) / 2,
                 text=f"<b>{g}</b>", showarrow=False,
                 font=dict(size=12, color='#333'),
                 bgcolor='#fff', bordercolor='#555', borderwidth=1.5, borderpad=4,
             )
-        fig_avg.update_layout(
+        fig_bar.update_layout(
             yaxis=dict(visible=False), showlegend=False,
-            margin=dict(l=20, r=20, t=30, b=40), height=360, template='plotly_white',
+            margin=HOLIDAY_MARGIN_BAR, height=380, template='plotly_white',
         )
-        st.plotly_chart(fig_avg, use_container_width=True, key=f"hol_avg_{chart_key}")
+        st.plotly_chart(fig_bar, use_container_width=True, key=f"hol_bar_{chart_key}")
+
+    st.markdown("<div style='height: 20px'></div>", unsafe_allow_html=True)
 
     top_cps = [
         'Lok Ma Chau Spur Line', 'Express Rail Link West Kowloon', 'Lo Wu',
@@ -1537,138 +1742,96 @@ def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_
         st.caption("No control-point breakdown available for this period.")
         return
 
+    st.markdown(f"**Avg. Daily {flow_label} by Control Point** — {selected_holiday} ({variant})")
     fig_cp = go.Figure()
     cp_x_idx = list(range(len(cp_years)))
+    cp_endpoints = []
+    all_y_vals = []
 
-    # Build CP line traces with per-CP distinct colors
-    cp_growth_data = hd.get('cp_growth', {})
     for cp in top_cps:
         pts = []
         for yr in cp_years:
             val = hd['cp_data'].get(yr, {}).get(cp, 0)
             pts.append(int(val) if val > 500 else None)
-        cp_type = CP_TYPE_MAP.get(cp, 'other')
         cp_label = CP_DISPLAY_NAME.get(cp, cp)
-        cp_color = CP_COLORS.get(cp, CP_COLORS.get(cp_type, '#A6A6A6'))
+        cp_color = CP_COLORS.get(cp, CP_COLORS.get(CP_TYPE_MAP.get(cp, 'other'), '#A6A6A6'))
         fig_cp.add_trace(go.Scatter(
             x=cp_x_idx, y=pts,
             name=cp_label,
-            legendgroup=cp_type,
-            showlegend=True,
+            showlegend=False,
             mode='lines+markers',
             line=dict(color=cp_color, width=2.5),
             marker=dict(size=7, color=cp_color),
             hovertemplate=f"{cp_label}<br>Avg Daily: <b>%{{y:,}}</b><extra></extra>",
         ))
-        # YoY growth annotations between consecutive years
-        cp_rates = cp_growth_data.get(cp, [])
-        for j in range(1, len(cp_years)):
-            y1, y2 = cp_years[j - 1], cp_years[j]
-            v1 = hd['cp_data'].get(y1, {}).get(cp, 0)
-            v2 = hd['cp_data'].get(y2, {}).get(cp, 0)
-            if v1 and v1 > 0 and j - 1 < len(cp_rates):
-                mid_x = (cp_x_idx[j - 1] + cp_x_idx[j]) / 2
-                mid_y = (v1 + v2) / 2
-                rate_str = cp_rates[j - 1]
-                is_pos = rate_str.startswith('+')
-                fig_cp.add_annotation(
-                    x=mid_x, y=mid_y,
-                    text=f"<b>{rate_str}</b>",
-                    showarrow=False,
-                    font=dict(size=9, color='#2e7d32' if is_pos else '#8b2942' if rate_str != '—' else '#888'),
-                    bgcolor='rgba(255,255,255,0.75)',
-                    borderpad=2,
-                )
+        visible_pts = [(i, p) for i, p in enumerate(pts) if p is not None]
+        if visible_pts:
+            last_idx, last_val = visible_pts[-1]
+            all_y_vals.append(last_val)
+            cp_endpoints.append({
+                'x': last_idx, 'y': last_val, 'text': cp_label, 'color': cp_color,
+            })
 
     others_pts = []
     for yr in cp_years:
         yr_data = hd['cp_data'].get(yr, {})
         others_val = sum(v for k, v in yr_data.items() if k not in top_cps)
         others_pts.append(int(others_val) if others_val > 0 else None)
+    others_color = CP_COLORS.get('Others', '#A6A6A6')
     fig_cp.add_trace(go.Scatter(
         x=cp_x_idx, y=others_pts, name='Others',
-        legendgroup='other', showlegend=True,
+        showlegend=False,
         mode='lines+markers',
-        line=dict(color=CP_COLORS.get('Others', '#A6A6A6'), width=1.5, dash='dot'),
-        marker=dict(size=5, color=CP_COLORS.get('Others', '#A6A6A6')),
+        line=dict(color=others_color, width=1.5, dash='dot'),
+        marker=dict(size=5, color=others_color),
+        hovertemplate="Others<br>Avg Daily: <b>%{y:,}</b><extra></extra>",
     ))
+    others_visible = [(i, p) for i, p in enumerate(others_pts) if p is not None]
+    if others_visible:
+        last_idx, last_val = others_visible[-1]
+        all_y_vals.append(last_val)
+        cp_endpoints.append({
+            'x': last_idx, 'y': last_val, 'text': 'Others', 'color': others_color,
+        })
 
+    _add_cp_line_endpoint_labels(fig_cp, cp_endpoints, max(all_y_vals) if all_y_vals else None)
+
+    x_pad_right = 0.85
     fig_cp.update_layout(
         xaxis=dict(
             tickmode='array', tickvals=cp_x_idx,
             ticktext=[str(yr) for yr in cp_years],
-            range=[-0.3, len(cp_years) - 0.7],
+            range=[-0.3, len(cp_years) - 0.3 + x_pad_right],
+            tickfont=dict(size=12),
         ),
-        yaxis=dict(tickformat=',', range=[0, None]),
-        legend=dict(
-            orientation='v', yanchor='top', y=1,
-            xanchor='left', x=1.02, font=dict(size=10),
-            tracegroupgap=4,
-        ),
-        showlegend=True,
-        margin=dict(l=60, r=200, t=80, b=40), height=460, template='plotly_white',
-        title=dict(
-            text=(
-                f"Avg. Daily {flow_label} by Control Point — {selected_holiday} ({variant})"
-                f"<br><sup>Distinct colour per checkpoint · YoY growth labeled between years</sup>"
-            ),
-            font=dict(size=14),
-        ),
+        yaxis=dict(tickformat=',', range=[0, None], tickfont=dict(size=12)),
+        showlegend=False,
+        margin=HOLIDAY_MARGIN_CP, height=420, template='plotly_white',
     )
     st.plotly_chart(fig_cp, use_container_width=True, key=f"hol_cp_{chart_key}")
+    st.markdown("<div style='height: 20px'></div>", unsafe_allow_html=True)
 
-    # Standalone total-volume table (full width)
+    # Control-point total table — rows = checkpoints, columns = years (+ YoY)
     all_cp_names = top_cps + ['Others']
-    cp_table_header = ['Year'] + all_cp_names
-    cp_total_rows = []
-    for yr in cp_years:
-        row = [str(yr)]
-        for cp in all_cp_names:
+    cp_rows_data = []
+    for cp in all_cp_names:
+        cp_label = 'Others' if cp == 'Others' else CP_DISPLAY_NAME.get(cp, cp)
+        year_vals = []
+        for yr in cp_years:
             if cp == 'Others':
                 yr_data = hd['cp_total'].get(yr, {})
                 tv = sum(v for k, v in yr_data.items() if k not in top_cps)
-                row.append(f"{int(tv):,}" if tv else "—")
             else:
                 tv = hd['cp_total'].get(yr, {}).get(cp, 0)
-                row.append(f"{int(tv):,}" if tv else "—")
-        cp_total_rows.append(row)
+            year_vals.append(int(tv) if tv else None)
+        cp_rows_data.append({
+            'label': cp_label,
+            'year_vals': year_vals,
+        })
 
-    cp_table_cols = list(zip(*cp_total_rows))
-    n_cp_cols = len(cp_table_header)
-    n_cp_rows = len(cp_total_rows)
-    cp_header_fills = ['#B9A779'] + [CP_COLORS.get(cp, '#A6A6A6') for cp in all_cp_names]
-    cp_cell_fills = [['#ffffff'] * n_cp_rows for _ in range(n_cp_cols)]
-    cp_cell_font_color = [['#111111'] * n_cp_rows for _ in range(n_cp_cols)]
-
-    fig_cp_table = go.Figure()
-    fig_cp_table.add_trace(go.Table(
-        header=dict(
-            values=[f"<b>{h}</b>" for h in cp_table_header],
-            fill=dict(color=cp_header_fills),
-            font=dict(color='white', size=11, family='Arial'),
-            align='center',
-            line=dict(color='#d4d4d4', width=1),
-        ),
-        cells=dict(
-            values=cp_table_cols,
-            font=dict(color=cp_cell_font_color, size=10, family='Arial'),
-            fill=dict(color=cp_cell_fills),
-            align=['left'] + ['center'] * (n_cp_cols - 1),
-            line=dict(color='#d4d4d4', width=1),
-            height=24,
-        ),
-    ))
-    table_height = 35 + len(cp_total_rows) * 30 + 100
-    fig_cp_table.update_layout(
-        title=dict(
-            text=f"Total {flow_label} by Control Point — {selected_holiday} ({variant})",
-            font=dict(size=14),
-        ),
-        margin=dict(l=20, r=20, t=50, b=10),
-        height=table_height,
-        template='plotly_white',
+    _render_cp_holiday_table(
+        cp_rows_data, cp_years, flow_label, selected_holiday, variant, chart_key,
     )
-    st.plotly_chart(fig_cp_table, use_container_width=True, key=f"hol_cp_table_{chart_key}")
 
 def render_mini_calendar_row(start_date_str, end_date_str, official_start_str, official_end_str):
     """Generates a compact horizontal calendar row showing weekends, official holidays, and bridge leave options."""
@@ -2035,8 +2198,27 @@ st.markdown(f"[Download source data]({GOV_DATA_URL})")
 st.markdown("---")
 st.subheader("✨ Holiday Period Analysis")
 
-col_cal, col_dir = st.columns(2)
+st.markdown(
+    """
+    <style>
+    @media (max-width: 960px) {
+        div[data-testid="stHorizontalBlock"]:has(.holiday-ctrl-wrap) {
+            flex-wrap: wrap !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(.holiday-ctrl-wrap) > div[data-testid="column"] {
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+            width: 100% !important;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+col_cal, col_dir, col_seg = st.columns(3)
 with col_cal:
+    st.markdown('<span class="holiday-ctrl-wrap"></span>', unsafe_allow_html=True)
     holiday_context = st.radio(
         "Holiday Calendar",
         ['Mainland', 'HK'],
@@ -2064,6 +2246,24 @@ with col_dir:
     )
     st.session_state.holiday_direction = flow_direction
     direction = flow_direction.lower()  # 'inbound' / 'outbound'
+with col_seg:
+    if direction == 'inbound':
+        traveller_segment = st.radio(
+            "Visitor segment",
+            HOLIDAY_INBOUND_SEGMENTS,
+            horizontal=True,
+            help="Mainland and international tourists only — excludes HK residents returning, matching inbound analysis.",
+            key='holiday_inbound_segment',
+        )
+    else:
+        traveller_segment = st.radio(
+            "Traveller segment",
+            HOLIDAY_OUTBOUND_SEGMENTS,
+            index=1,
+            horizontal=True,
+            help="All = total departures; HK Residents and Tourists match the outbound analysis breakdown.",
+            key='holiday_outbound_segment',
+        )
 
 holiday_region = _resolve_region(holiday_context)
 holiday_keys = list_holidays_for_context(holiday_context)
@@ -2087,8 +2287,9 @@ for yr in tracker_years:
 
     if holiday_region == 'HK':
         meta = hk_meta.get(yr, {})
-        st.markdown(f"**Year {yr}**")
+        off_days = (pd.to_datetime(cfg_off['end']) - pd.to_datetime(cfg_off['start'])).days + 1
         if not meta.get('al_applicable'):
+            st.markdown(f"**Year {yr}** · {off_days} holiday day{'s' if off_days != 1 else ''}")
             cal_html = render_mini_calendar_row(
                 start_date_str=cfg_off['start'],
                 end_date_str=cfg_off['end'],
@@ -2097,6 +2298,10 @@ for yr in tracker_years:
             )
         else:
             cfg_ext = extended_periods.get(yr)
+            ext_days = (pd.to_datetime(cfg_ext['end']) - pd.to_datetime(cfg_ext['start'])).days + 1
+            st.markdown(
+                f"**Year {yr}** · {off_days} official · {ext_days} incl. AL bridge"
+            )
             cal_html = render_mini_calendar_row(
                 start_date_str=cfg_ext['start'],
                 end_date_str=cfg_ext['end'],
@@ -2104,7 +2309,8 @@ for yr in tracker_years:
                 official_end_str=cfg_off['end'],
             )
     else:
-        st.markdown(f"**Year {yr}**")
+        off_days = (pd.to_datetime(cfg_off['end']) - pd.to_datetime(cfg_off['start'])).days + 1
+        st.markdown(f"**Year {yr}** · {off_days} holiday day{'s' if off_days != 1 else ''}")
         cal_html = render_mini_calendar_row(
             start_date_str=cfg_off['start'],
             end_date_str=cfg_off['end'],
@@ -2126,14 +2332,14 @@ tab_official, tab_extended = st.tabs(["Official View", "Annual Leave View"])
 hd_official = get_holiday_data(
     arrivals_df, departures_df, daily_in, daily_out,
     selected_holiday_key, context=holiday_context, variant='Official Days',
-    direction=direction,
+    direction=direction, segment=traveller_segment,
 )
 hd_al = None
 if holiday_region == 'HK':
     hd_al = get_holiday_data(
         arrivals_df, departures_df, daily_in, daily_out,
         selected_holiday_key, context=holiday_context, variant='Extended Leave Days',
-        al_fallback=True, direction=direction,
+        al_fallback=True, direction=direction, segment=traveller_segment,
     )
     if not hd_al or not hd_al.get('avg'):
         hd_al = hd_official
@@ -2142,7 +2348,7 @@ with tab_official:
     render_holiday_variant_charts(
         hd_official, holiday_context, 'Official Days', selected_holiday_label,
         daily_in, daily_out, COLORS, CURRENT_YEAR,
-        holiday_key=selected_holiday_key, direction=direction,
+        holiday_key=selected_holiday_key, direction=direction, segment=traveller_segment,
     )
 
 with tab_extended:
@@ -2159,7 +2365,7 @@ with tab_extended:
             render_holiday_variant_charts(
                 hd_al, holiday_context, 'Extended Leave Days', selected_holiday_label,
                 daily_in, daily_out, COLORS, CURRENT_YEAR,
-                holiday_key=selected_holiday_key, direction=direction,
+                holiday_key=selected_holiday_key, direction=direction, segment=traveller_segment,
             )
         else:
             st.info("No traffic data available for the selected holiday periods.")
