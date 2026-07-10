@@ -47,15 +47,15 @@ MARKET_GROUP_MAP = {
     "India": "India",
     "Indonesia": "ASEAN",
     "Japan": "G7",
-    "Macau SAR": "Macau SAR",
+    "Macau SAR": "Greater China",
     "Mainland": "Mainland China",
     "Malaysia": "ASEAN",
-    "Netherlands": "Others",
+    "Netherlands": "Netherlands",
     "Philippines": "ASEAN",
     "Russia": "Russia",
     "Singapore": "ASEAN",
-    "South Korea": "South Korea",
-    "Taiwan": "Taiwan",
+    "South Korea": "Other Markets",
+    "Taiwan": "Greater China",
     "Thailand": "ASEAN",
     "United Kingdom": "G7",
     "USA": "G7",
@@ -65,32 +65,35 @@ MARKET_GROUP_MAP = {
 
 # PPT summary row layout (matches Macro Update_IBOB Master TABLE 2)
 PPT_SUMMARY_ROWS = [
-    ("", "Taiwan", ["Taiwan"]),
-    ("", "South Korea", ["South Korea"]),
-    ("", "Macau SAR", ["Macau SAR"]),
+    ("Greater China", "Taiwan", ["Taiwan"]),
+    ("Greater China", "Macau SAR", ["Macau SAR"]),
     ("ASEAN", "Philippines", ["Philippines"]),
     ("ASEAN", "Thailand", ["Thailand"]),
     ("ASEAN", "Indonesia", ["Indonesia"]),
     ("ASEAN", "Singapore", ["Singapore"]),
-    ("ASEAN", "the Others¹", ["Malaysia", "Vietnam"]),
+    ("ASEAN", "Malaysia", ["Malaysia"]),
+    ("ASEAN", "Vietnam", ["Vietnam"]),
     ("ASEAN", "ASEAN Total", "asean_total"),
     ("G7", "USA", ["USA"]),
     ("G7", "Japan", ["Japan"]),
     ("G7", "United Kingdom", ["United Kingdom"]),
-    ("G7", "the Others²", ["Canada", "France", "Germany"]),
+    ("G7", "Canada", ["Canada"]),
+    ("G7", "France", ["France"]),
+    ("G7", "Germany", ["Germany"]),
     ("G7", "G7 Total", "g7_total"),
-    ("", "Australia", ["Australia"]),
-    ("", "Middle East", ["Middle East"]),
-    ("", "India", ["India"]),
-    ("", "Russia", ["Russia"]),
-    ("", "Netherlands", ["Netherlands"]),
+    ("Other Markets", "South Korea", ["South Korea"]),
+    ("Other Markets", "Australia", ["Australia"]),
+    ("Other Markets", "India", ["India"]),
+    ("Other Markets", "Middle East", ["Middle East"]),
+    ("Other Markets", "Russia", ["Russia"]),
+    ("Other Markets", "Netherlands", ["Netherlands"]),
     ("", "Total", "grand_total"),
 ]
 
 _ASEAN_MARKETS = {m for m, g in MARKET_GROUP_MAP.items() if g == "ASEAN"}
 _G7_MARKETS = {m for m, g in MARKET_GROUP_MAP.items() if g == "G7"}
 _PPT_LISTED_MARKETS = (
-    {"Taiwan", "South Korea", "Macau SAR", "Australia", "Middle East", "India", "Russia", "Netherlands"}
+    {"South Korea", "Taiwan", "Macau SAR", "Australia", "Middle East", "India", "Russia", "Netherlands"}
     | _ASEAN_MARKETS | _G7_MARKETS
 )
 
@@ -240,11 +243,11 @@ HOLIDAY_PERIODS = {
 
 CP_COLORS = {
     # Each control point gets distinct color; shades grouped by type
-    'Lok Ma Chau Spur Line': '#1B6B5A',          # rail — deep teal
-    'Express Rail Link West Kowloon': '#3A9790',  # rail — medium teal
-    'Lo Wu': '#6EC4B8',                            # rail — light teal
-    'Shenzhen Bay': '#B8860B',                     # car — dark goldenrod
-    'Heung Yuen Wai': '#DAA520',                   # car — goldenrod
+    'Lok Ma Chau Spur Line': '#0F6B55',          # rail — dark teal
+    'Express Rail Link West Kowloon': '#2B8A8E',  # rail — blue-teal
+    'Lo Wu': '#66B8B0',                            # rail — light teal
+    'Shenzhen Bay': '#A0720A',                     # car — dark goldenrod
+    'Heung Yuen Wai': '#CC8800',                   # car — orange-gold
     'Hong Kong-Zhuhai-Macao Bridge': '#CD853F',    # car — peru
     'Lok Ma Chau': '#E8C547',                      # car — golden yellow
     'Airport': '#CF9E9A',                          # air — rose
@@ -831,72 +834,43 @@ def _cp_table_column_spec(cp_years):
     return spec, years_desc
 
 
-def _add_cp_line_endpoint_labels(fig, endpoints, y_max):
-    """Place line-end labels with arrows; stagger and link all labels when endpoints overlap."""
+def _add_cp_direct_labels(fig, endpoints):
+    """Place colored text labels inline at line endpoints — data coords, minimal vertical de-conflict.
+
+    Labels sit directly to the right of each line's last data point (no arrows).
+    Vertical nudging only fires when adjacent labels would physically overlap
+    (< 4.5 % of the y-axis range), so labels stay visually tethered to their lines.
+    """
     if not endpoints:
         return
 
-    y_span = max(y_max or 0, max(e['y'] for e in endpoints), 1)
-    y_tolerance = max(y_span * 0.02, 3000)
-    y_step = max(y_span * 0.07, 6000)
-    x_label_offset = 0.38
+    endpoints = sorted(endpoints, key=lambda e: e['y'], reverse=True)
 
-    groups = []
-    for endpoint in endpoints:
-        placed = False
-        for group in groups:
-            anchor = group[0]
-            if (
-                endpoint['x'] == anchor['x']
-                and abs(endpoint['y'] - anchor['y']) <= y_tolerance
-            ):
-                group.append(endpoint)
-                placed = True
-                break
-        if not placed:
-            groups.append([endpoint])
+    max_y = max(ep['y'] for ep in endpoints)
+    y_range = max_y if max_y > 0 else 1
+    min_gap_y = y_range * 0.045   # ~15 px at 345 px plot — one line height
 
-    for group in groups:
-        group.sort(key=lambda e: e['y'], reverse=True)
-        if len(group) == 1:
-            lbl = group[0]
-            fig.add_annotation(
-                x=lbl['x'], y=lbl['y'],
-                ax=lbl['x'] + x_label_offset, ay=lbl['y'],
-                xref='x', yref='y', axref='x', ayref='y',
-                text=lbl['text'],
-                showarrow=True,
-                arrowhead=2,
-                arrowsize=1,
-                arrowwidth=1.2,
-                arrowcolor=lbl['color'],
-                font=dict(size=12, color=lbl['color']),
-                bgcolor='rgba(255,255,255,0.85)',
-                borderpad=3,
-                xanchor='left',
-            )
-            continue
+    last_x = max(ep['x'] for ep in endpoints)
+    label_x = last_x + 0.35       # nudge right of the last tick
 
-        n = len(group)
-        anchor_x = group[0]['x']
-        anchor_y = sum(e['y'] for e in group) / n
-        for i, lbl in enumerate(group):
-            label_y = anchor_y + (i - (n - 1) / 2) * y_step
-            fig.add_annotation(
-                x=lbl['x'], y=lbl['y'],
-                ax=anchor_x + x_label_offset, ay=label_y,
-                xref='x', yref='y', axref='x', ayref='y',
-                text=lbl['text'],
-                showarrow=True,
-                arrowhead=2,
-                arrowsize=1,
-                arrowwidth=1.2,
-                arrowcolor=lbl['color'],
-                font=dict(size=11, color=lbl['color']),
-                bgcolor='rgba(255,255,255,0.85)',
-                borderpad=2,
-                xanchor='left',
-            )
+    prev_y = None
+    for ep in endpoints:
+        y_pos = float(ep['y'])
+
+        if prev_y is not None and (prev_y - y_pos) < min_gap_y:
+            y_pos = prev_y - min_gap_y
+        prev_y = y_pos
+
+        fig.add_annotation(
+            x=label_x, y=y_pos,
+            xref='x', yref='y',
+            text=ep['text'],
+            showarrow=False,
+            font=dict(size=11, color=ep['color']),
+            bgcolor='rgba(255,255,255,0.85)',
+            borderpad=2,
+            xanchor='left',
+        )
 
 
 def _render_cp_holiday_table(cp_rows_data, cp_years, flow_label, selected_holiday, variant, chart_key):
@@ -949,7 +923,7 @@ def _render_cp_holiday_table(cp_rows_data, cp_years, flow_label, selected_holida
     st.dataframe(
         styled,
         column_config=col_config,
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         height=table_height,
         key=f"hol_cp_table_{chart_key}",
@@ -1643,7 +1617,7 @@ def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_
         colors,
     )
     if fig_fy:
-        st.plotly_chart(fig_fy, use_container_width=True, key=f"hol_fy_{chart_key}")
+        st.plotly_chart(fig_fy, width='stretch', key=f"hol_fy_{chart_key}")
         st.markdown("<div style='height: 20px'></div>", unsafe_allow_html=True)
 
     # --- Daily trend + bar chart (side by side, half width each) ---
@@ -1684,9 +1658,10 @@ def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_
             margin=HOLIDAY_MARGIN_PANEL, height=380, template='plotly_white',
             yaxis_range=[0, None],
         )
-        st.plotly_chart(fig_daily, use_container_width=True, key=f"hol_daily_{chart_key}")
+        st.plotly_chart(fig_daily, width='stretch', key=f"hol_daily_{chart_key}")
 
     with col_bar:
+        st.markdown(f"**{flow_label}** — {variant}")
         volume_basis = st.radio(
             "Traffic volume basis",
             ['Period total', 'Daily average'],
@@ -1704,12 +1679,10 @@ def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_
         ]
 
         if volume_basis == 'Period total':
-            st.markdown(f"**Period Total {flow_label}** — {variant}")
             bar_vals = [hd['total'][yr] for yr in years_avail]
             growth_vals = hd.get('total_growth', [])
             text_labels = [format_volume_label(v) for v in bar_vals]
         else:
-            st.markdown(f"**Daily Average {flow_label}** — {variant}")
             bar_vals = [hd['avg'][yr] for yr in years_avail]
             growth_vals = hd.get('growth', [])
             text_labels = [f"<b>{int(v/1000)}K</b>" for v in bar_vals]
@@ -1729,7 +1702,7 @@ def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_
             yaxis=dict(visible=False), showlegend=False,
             margin=HOLIDAY_MARGIN_BAR, height=380, template='plotly_white',
         )
-        st.plotly_chart(fig_bar, use_container_width=True, key=f"hol_bar_{chart_key}")
+        st.plotly_chart(fig_bar, width='stretch', key=f"hol_bar_{chart_key}")
 
     st.markdown("<div style='height: 20px'></div>", unsafe_allow_html=True)
 
@@ -1746,7 +1719,6 @@ def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_
     fig_cp = go.Figure()
     cp_x_idx = list(range(len(cp_years)))
     cp_endpoints = []
-    all_y_vals = []
 
     for cp in top_cps:
         pts = []
@@ -1755,6 +1727,10 @@ def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_
             pts.append(int(val) if val > 500 else None)
         cp_label = CP_DISPLAY_NAME.get(cp, cp)
         cp_color = CP_COLORS.get(cp, CP_COLORS.get(CP_TYPE_MAP.get(cp, 'other'), '#A6A6A6'))
+        # Abbreviate long CP names for endpoint labels
+        short_label = cp_label.replace('Lok Ma Chau Spur Line', 'LMC Spur Line') \
+                              .replace('Express Rail Link West Kowloon', 'XRL West Kowloon') \
+                              .replace('Hong Kong-Zhuhai-Macao Bridge', 'HZMB')
         fig_cp.add_trace(go.Scatter(
             x=cp_x_idx, y=pts,
             name=cp_label,
@@ -1767,9 +1743,8 @@ def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_
         visible_pts = [(i, p) for i, p in enumerate(pts) if p is not None]
         if visible_pts:
             last_idx, last_val = visible_pts[-1]
-            all_y_vals.append(last_val)
             cp_endpoints.append({
-                'x': last_idx, 'y': last_val, 'text': cp_label, 'color': cp_color,
+                'x': last_idx, 'y': last_val, 'text': short_label, 'color': cp_color,
             })
 
     others_pts = []
@@ -1777,38 +1752,37 @@ def render_holiday_variant_charts(hd, context, variant, selected_holiday, daily_
         yr_data = hd['cp_data'].get(yr, {})
         others_val = sum(v for k, v in yr_data.items() if k not in top_cps)
         others_pts.append(int(others_val) if others_val > 0 else None)
-    others_color = CP_COLORS.get('Others', '#A6A6A6')
+    others_color = '#888888'
     fig_cp.add_trace(go.Scatter(
         x=cp_x_idx, y=others_pts, name='Others',
         showlegend=False,
         mode='lines+markers',
-        line=dict(color=others_color, width=1.5, dash='dot'),
+        line=dict(color=others_color, width=1.5, dash='dash'),
         marker=dict(size=5, color=others_color),
         hovertemplate="Others<br>Avg Daily: <b>%{y:,}</b><extra></extra>",
     ))
     others_visible = [(i, p) for i, p in enumerate(others_pts) if p is not None]
     if others_visible:
         last_idx, last_val = others_visible[-1]
-        all_y_vals.append(last_val)
         cp_endpoints.append({
-            'x': last_idx, 'y': last_val, 'text': 'Others', 'color': others_color,
+            'x': last_idx, 'y': last_val, 'text': '<i>Others</i>', 'color': others_color,
         })
 
-    _add_cp_line_endpoint_labels(fig_cp, cp_endpoints, max(all_y_vals) if all_y_vals else None)
+    _add_cp_direct_labels(fig_cp, cp_endpoints)
 
-    x_pad_right = 0.85
     fig_cp.update_layout(
         xaxis=dict(
             tickmode='array', tickvals=cp_x_idx,
             ticktext=[str(yr) for yr in cp_years],
-            range=[-0.3, len(cp_years) - 0.3 + x_pad_right],
+            range=[-0.3, len(cp_years) - 0.3],
             tickfont=dict(size=12),
         ),
-        yaxis=dict(tickformat=',', range=[0, None], tickfont=dict(size=12)),
+        yaxis=dict(tickformat=',', range=[0, None], tickfont=dict(size=12),
+                   title=dict(text='Avg. Daily Visitors', font=dict(size=12, color='#555'))),
         showlegend=False,
-        margin=HOLIDAY_MARGIN_CP, height=420, template='plotly_white',
+        margin=dict(l=60, r=140, t=75, b=60), height=480, template='plotly_white',
     )
-    st.plotly_chart(fig_cp, use_container_width=True, key=f"hol_cp_{chart_key}")
+    st.plotly_chart(fig_cp, width='stretch', key=f"hol_cp_{chart_key}")
     st.markdown("<div style='height: 20px'></div>", unsafe_allow_html=True)
 
     # Control-point total table — rows = checkpoints, columns = years (+ YoY)
@@ -1898,6 +1872,24 @@ def render_mini_calendar_row(start_date_str, end_date_str, official_start_str, o
 st.title("IBOB Traffic Trends")
 st.caption("Inbound | Outbound | International Visitors | Holiday Analysis | Data Analytics")
 
+# Quick-skip navigation pills
+st.markdown("""
+<div style="display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 4px 0;">
+  <a href="#section-inbound" style="text-decoration:none; padding:5px 14px; border-radius:16px;
+      background:#1B6B5A; color:#fff; font-size:14px; font-weight:500; white-space:nowrap;">
+    🛬 Inbound</a>
+  <a href="#section-outbound" style="text-decoration:none; padding:5px 14px; border-radius:16px;
+      background:#B8860B; color:#fff; font-size:14px; font-weight:500; white-space:nowrap;">
+    🛫 Outbound</a>
+  <a href="#section-holiday" style="text-decoration:none; padding:5px 14px; border-radius:16px;
+      background:#6E3B8B; color:#fff; font-size:14px; font-weight:500; white-space:nowrap;">
+    ✨ Holiday</a>
+  <a href="#section-international" style="text-decoration:none; padding:5px 14px; border-radius:16px;
+      background:#CF9E9A; color:#fff; font-size:14px; font-weight:500; white-space:nowrap;">
+    🌏 International</a>
+</div>
+""", unsafe_allow_html=True)
+
 col1, _ = st.columns([1,5])
 with col1:
     if st.button("🔄 Refresh Data", type="primary"):
@@ -1925,6 +1917,7 @@ COLORS = {**get_year_colors(DISPLAY_YEARS), '2018': BASELINE_COLOR}
 
 # ===== INBOUND =====
 st.markdown("---")
+st.markdown('<div id="section-inbound"></div>', unsafe_allow_html=True)
 st.subheader("🛬 Inbound Tourist Arrivals")
 
 inbound_2018 = [(INBOUND_2018[1]+INBOUND_2018[2])/2]+[INBOUND_2018[m] for m in range(3,13)]
@@ -2019,7 +2012,7 @@ st.plotly_chart(
         inbound_s,
         y_max=300000
     ),
-    use_container_width=True
+    width='stretch'
 )
 
 # Tables summary — standalone full-width figure with both tables stacked
@@ -2031,7 +2024,7 @@ st.plotly_chart(
         table2_rows=rec_rows,
         table2_header=['Recovery Rate vs 2018'] + months_h + ['FY*'],
     ),
-    use_container_width=True
+    width='stretch'
 )
 st.caption(f"Source: Transportation Dept; Tourism Board; Immigration Dept. | * For 2026: FY = YTD (Jan–{month_abbrs[ytd_through_month - 1]}) — growth rates are period-matched, not full-year.")
 st.markdown(f"[Download source data]({GOV_DATA_URL})")
@@ -2091,9 +2084,230 @@ def _build_intl_monthly_chart(df):
     return fig
 
 
+# --- International Monthly YoY Detail ---
+
+def _intl_precompute_monthly_avgs(df, year, months):
+    """Return {market: {month: daily_avg}} for all markets in a year."""
+    result = {}
+    for market in INTERNATIONAL_MARKETS:
+        if market not in df.columns:
+            continue
+        result[market] = {}
+        for m in months:
+            mask = (df['year'] == year) & (df['month'] == m)
+            row = df[mask]
+            if row.empty:
+                result[market][m] = 0
+            else:
+                val = pd.to_numeric(row[market], errors='coerce').fillna(0).sum()
+                days = calendar.monthrange(int(year), int(m))[1]
+                result[market][m] = int(val) / days
+    return result
+
+
+def _intl_group_monthly_avg(pre, month, markets):
+    """Daily avg for a market-group spec in a given month."""
+    if markets == "asean_total":
+        mkts = [m for m in INTERNATIONAL_MARKETS if MARKET_GROUP_MAP.get(m) == 'ASEAN']
+    elif markets == "g7_total":
+        mkts = [m for m in INTERNATIONAL_MARKETS if MARKET_GROUP_MAP.get(m) == 'G7']
+    elif markets == "others4":
+        mkts = [m for m in INTERNATIONAL_MARKETS if m not in _PPT_LISTED_MARKETS]
+    elif markets == "grand_total":
+        mkts = INTERNATIONAL_MARKETS
+    else:
+        mkts = markets
+    return sum(pre.get(m, {}).get(month, 0) for m in mkts)
+
+
+def _intl_build_monthly_yoy_chart(df, curr_year, prev_year, curr_month):
+    """Line chart: monthly YoY % for Total, ASEAN, G7, Other Markets vs prev year."""
+    months = list(range(1, curr_month + 1))
+    month_labels = [_month_abbr(m) for m in months]
+
+    curr_pre = _intl_precompute_monthly_avgs(df, curr_year, months)
+    prev_pre = _intl_precompute_monthly_avgs(df, prev_year, months)
+
+    asean_mkts = [m for m in INTERNATIONAL_MARKETS if MARKET_GROUP_MAP.get(m) == 'ASEAN']
+    g7_mkts = [m for m in INTERNATIONAL_MARKETS if MARKET_GROUP_MAP.get(m) == 'G7']
+    other_mkts = [m for m in INTERNATIONAL_MARKETS if MARKET_GROUP_MAP.get(m) not in ('ASEAN', 'G7')]
+
+    groups = [
+        ('Total', INTERNATIONAL_MARKETS, '#111111', 2.8, 'solid'),
+        ('ASEAN', asean_mkts, '#2E7D5E', 2.0, 'solid'),
+        ('G7', g7_mkts, '#8B2942', 2.0, 'solid'),
+        ('Other Markets', other_mkts, '#B9A779', 1.8, 'dash'),
+    ]
+
+    fig = go.Figure()
+    for name, mkts, color, width, dash in groups:
+        yoy_vals = []
+        for m in months:
+            curr_avg = _intl_group_monthly_avg(curr_pre, m, mkts)
+            prev_avg = _intl_group_monthly_avg(prev_pre, m, mkts)
+            if prev_avg and prev_avg > 0:
+                yoy_vals.append(round((curr_avg - prev_avg) / prev_avg * 100, 1))
+            else:
+                yoy_vals.append(None)
+        fig.add_trace(go.Scatter(
+            x=month_labels, y=yoy_vals,
+            name=name, mode='lines+markers',
+            line=dict(color=color, width=width, dash=dash),
+            marker=dict(size=6),
+            hovertemplate=f'{name}: <b>%{{y:+.1f}}%</b><extra></extra>',
+            connectgaps=False,
+        ))
+
+    fig.add_hline(y=0, line_dash='dash', line_color='#999', line_width=1)
+
+    fig.update_layout(
+        title=dict(text=f"{curr_year} vs {prev_year} Monthly YoY — Daily Avg Arrivals", font=dict(size=15)),
+        yaxis=dict(title='YoY % Change', ticksuffix='%'),
+        margin=dict(l=60, r=20, t=50, b=40), height=380, template='plotly_white',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        hovermode='x unified',
+    )
+    return fig
+
+
+def _intl_build_monthly_yoy_table_html(df, curr_year, prev_year, curr_month, row_styles):
+    """HTML table: PPT market rows × month columns, cells = YoY % with green/red coloring."""
+    months = list(range(1, curr_month + 1))
+    month_labels = [_month_abbr(m) for m in months]
+
+    curr_pre = _intl_precompute_monthly_avgs(df, curr_year, months)
+    prev_pre = _intl_precompute_monthly_avgs(df, prev_year, months)
+
+    def _fmt_yoy_cell(pct):
+        if pct is None:
+            return ("—", "#111")
+        sign = "+" if pct >= 0 else ""
+        color = "#2e7d32" if pct > 0 else ("#8b2942" if pct < 0 else "#111")
+        return (f"{sign}{pct:.0%}", color)
+
+    # Compute rows
+    rows = []
+    for category, label, spec in PPT_SUMMARY_ROWS:
+        yoy_cells = []
+        for m in months:
+            curr_avg = _intl_group_monthly_avg(curr_pre, m, spec)
+            prev_avg = _intl_group_monthly_avg(prev_pre, m, spec)
+            if prev_avg and prev_avg > 0:
+                yoy_cells.append((curr_avg - prev_avg) / prev_avg)
+            else:
+                yoy_cells.append(None)
+
+        # YTD column (proper weighted average matching PPT summary)
+        curr_total = sum(_intl_group_monthly_avg(curr_pre, m, spec) * calendar.monthrange(int(curr_year), int(m))[1] for m in months)
+        prev_total = sum(_intl_group_monthly_avg(prev_pre, m, spec) * calendar.monthrange(int(prev_year), int(m))[1] for m in months)
+        curr_days = sum(calendar.monthrange(int(curr_year), int(m))[1] for m in months)
+        prev_days = sum(calendar.monthrange(int(prev_year), int(m))[1] for m in months)
+        curr_ytd_avg = curr_total / curr_days if curr_days > 0 else 0
+        prev_ytd_avg = prev_total / prev_days if prev_days > 0 else 0
+        ytd_yoy = (curr_ytd_avg - prev_ytd_avg) / prev_ytd_avg if prev_ytd_avg > 0 else None
+
+        rows.append({
+            'category': category,
+            'label': label,
+            'spec': spec,
+            'yoy_cells': yoy_cells,
+            'ytd_yoy': ytd_yoy,
+        })
+
+    # Merge consecutive category labels
+    prev_cat = None
+    for row in rows:
+        cat = row['category']
+        if cat and cat == prev_cat:
+            row['category'] = ''
+        elif cat:
+            prev_cat = cat
+        else:
+            prev_cat = None
+
+    # Rowspan computation
+    rowspans = {}
+    i = 0
+    n = len(row_styles)
+    while i < n:
+        cstate = row_styles[i].get("category_cell", "none")
+        if cstate == "start":
+            span = 1
+            j = i + 1
+            while j < n:
+                nxt = row_styles[j].get("category_cell", "none")
+                if nxt in ("middle", "end"):
+                    span += 1
+                    if nxt == "end":
+                        break
+                    j += 1
+                    continue
+                break
+            rowspans[i] = span
+        elif cstate == "single":
+            rowspans[i] = 1
+        i += 1
+
+    # Build HTML
+    columns = ["Category", "Market"] + month_labels + ["YTD"]
+    html = ['<style>']
+    html.append('.intl-monthly-table { width:100%; border-collapse:collapse; font-size:13px; }')
+    html.append('.intl-monthly-table th { background:#B9A779; color:#fff; font-weight:700; text-align:center; padding:5px 6px; border:1px solid #d4d4d4; }')
+    html.append('.intl-monthly-table td { border:1px solid #d4d4d4; padding:3px 6px; text-align:center; }')
+    html.append('.intl-monthly-table td.col-category, .intl-monthly-table td.col-market { text-align:left; }')
+    html.append('.intl-monthly-table td.group-child { padding-left:1.25em; }')
+    html.append('.intl-monthly-table tr.asean-total td.col-market, .intl-monthly-table tr.asean-total td.col-ytd { font-weight:700; border:2px solid #2e5c3e; }')
+    html.append('.intl-monthly-table tr.g7-total td.col-market, .intl-monthly-table tr.g7-total td.col-ytd { font-weight:700; border:2px solid #8b2942; }')
+    html.append('.intl-monthly-table tr.grand-total td { font-weight:700; }')
+    html.append('</style>')
+
+    html.append('<table class="intl-monthly-table">')
+    html.append('<thead><tr>')
+    for col in columns:
+        html.append(f'<th>{escape(col)}</th>')
+    html.append('</tr></thead><tbody>')
+
+    for idx, row in enumerate(rows):
+        kind = row_styles[idx].get("kind", "default")
+        tr_class = {
+            "asean_total": "asean-total",
+            "g7_total": "g7-total",
+            "grand_total": "grand-total",
+        }.get(kind, "")
+        html.append(f'<tr class="{tr_class}">')
+
+        # Category cell with rowspan
+        cstate = row_styles[idx].get("category_cell", "none")
+        if cstate in ("start", "single"):
+            span = rowspans.get(idx, 1)
+            cat_val = escape(str(row['category']))
+            html.append(f'<td class="col-category" rowspan="{span}">{cat_val}</td>')
+        elif cstate == "none":
+            html.append('<td class="col-category"></td>')
+
+        # Market cell
+        market_cls = "col-market group-child" if kind == "group_child" else "col-market"
+        html.append(f'<td class="{market_cls}">{escape(str(row["label"]))}</td>')
+
+        # Monthly YoY cells
+        for cell_idx, pct in enumerate(row['yoy_cells']):
+            text, color = _fmt_yoy_cell(pct)
+            html.append(f'<td style="color:{color};">{escape(text)}</td>')
+
+        # YTD column
+        ytd_text, ytd_color = _fmt_yoy_cell(row['ytd_yoy'])
+        html.append(f'<td class="col-ytd" style="color:{ytd_color};">{escape(ytd_text)}</td>')
+
+        html.append('</tr>')
+
+    html.append('</tbody></table>')
+    return ''.join(html)
+
+
 def render_international_visitors_section():
     """Render international visitors: monthly chart, daily-average table with inline growth."""
     st.markdown("---")
+    st.markdown('<div id="section-international"></div>', unsafe_allow_html=True)
     st.subheader("🌏 International Visitor Arrivals")
 
     international_df, international_fetch_time = fetch_international_data()
@@ -2121,7 +2335,7 @@ def render_international_visitors_section():
         # Monthly trend chart
         monthly_chart = _build_intl_monthly_chart(international_df)
         if monthly_chart is not None:
-            st.plotly_chart(monthly_chart, use_container_width=True, key="intl_monthly_chart")
+            st.plotly_chart(monthly_chart, width='stretch', key="intl_monthly_chart")
 
         summary_df, row_styles, meta = build_ppt_summary(
             international_df_c,
@@ -2131,16 +2345,37 @@ def render_international_visitors_section():
         )
 
         if summary_df is not None:
-            st.markdown(
-                f"**Visitor Arrivals Summary (Daily Average)** — {meta['period_label']}"
+            view_mode = st.radio(
+                "View",
+                ["YTD Summary", "Monthly Detail"],
+                horizontal=True,
+                key="intl_view_mode",
+                help="YTD Summary = cumulative daily average with YoY. Monthly Detail = per-month YoY breakdown to spot which months drove the change.",
             )
-            render_ppt_summary_html(summary_df, row_styles)
 
-            st.caption(
-                "Source: HKTB PartnerNet (COR Arrivals). "
-                "¹ ASEAN Others = Malaysia + Vietnam. "
-                "² G7 Others = Canada, France, Germany."
-            )
+            if view_mode == "YTD Summary":
+                st.markdown(
+                    f"**Visitor Arrivals Summary (Daily Average)** — {meta['period_label']}"
+                )
+                render_ppt_summary_html(summary_df, row_styles)
+            else:
+                prev_year = curr_year - 1
+                if prev_year in available_years:
+                    yoy_chart = _intl_build_monthly_yoy_chart(
+                        international_df_c, curr_year, prev_year, curr_month,
+                    )
+                    if yoy_chart is not None:
+                        st.plotly_chart(yoy_chart, width='stretch', key="intl_monthly_yoy_chart")
+
+                    st.markdown(f"**Monthly YoY Breakdown by Market** — {curr_year} vs {prev_year} (daily avg)")
+                    monthly_table_html = _intl_build_monthly_yoy_table_html(
+                        international_df_c, curr_year, prev_year, curr_month, row_styles,
+                    )
+                    st.markdown(monthly_table_html, unsafe_allow_html=True)
+                else:
+                    st.info(f"No {prev_year} data available for YoY comparison.")
+
+            st.caption("Source: HKTB PartnerNet (COR Arrivals).")
         else:
             st.info("Not enough data to build the summary for the current year.")
     else:
@@ -2153,6 +2388,7 @@ def render_international_visitors_section():
 
 # ===== OUTBOUND =====
 st.markdown("---")
+st.markdown('<div id="section-outbound"></div>', unsafe_allow_html=True)
 st.subheader("🛫 Outbound HK Resident Departures")
 
 outbound_2018 = [(OUTBOUND_2018[1]+OUTBOUND_2018[2])/2]+[OUTBOUND_2018[m] for m in range(3,13)]
@@ -2176,7 +2412,7 @@ st.plotly_chart(
         outbound_s,
         y_min=0, y_max=500000
     ),
-    use_container_width=True
+    width='stretch'
 )
 
 # Tables summary — standalone full-width figure with both tables stacked
@@ -2189,36 +2425,18 @@ st.plotly_chart(
         table2_header=['Recovery Rate vs 2018'] + months_h + ['FY*'],
         extra_height=30,
     ),
-    use_container_width=True
+    width='stretch'
 )
 st.caption(f"Source: Immigration Department. | * For 2026: FY = YTD (Jan–{month_abbrs[ytd_through_month - 1]}) — growth rates are period-matched, not full-year.")
 st.markdown(f"[Download source data]({GOV_DATA_URL})")
 
 # ===== HOLIDAY ANALYSIS =====
 st.markdown("---")
+st.markdown('<div id="section-holiday"></div>', unsafe_allow_html=True)
 st.subheader("✨ Holiday Period Analysis")
 
-st.markdown(
-    """
-    <style>
-    @media (max-width: 960px) {
-        div[data-testid="stHorizontalBlock"]:has(.holiday-ctrl-wrap) {
-            flex-wrap: wrap !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has(.holiday-ctrl-wrap) > div[data-testid="column"] {
-            flex: 1 1 100% !important;
-            min-width: 100% !important;
-            width: 100% !important;
-        }
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-col_cal, col_dir, col_seg = st.columns(3)
+col_cal, col_dir, col_seg = st.columns([1, 1, 1])
 with col_cal:
-    st.markdown('<span class="holiday-ctrl-wrap"></span>', unsafe_allow_html=True)
     holiday_context = st.radio(
         "Holiday Calendar",
         ['Mainland', 'HK'],
