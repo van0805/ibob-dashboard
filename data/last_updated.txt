@@ -1,3 +1,3 @@
-Last updated: 2026-07-13 05:39:31 UTC
-Rows: 59952
+Last updated: 2026-07-20 05:41:22 UTC
+Rows: 60148
 Source: https://www.immd.gov.hk/opendata/eng/transport/immigration_clearance/statistics_on_daily_passenger_traffic.csv
